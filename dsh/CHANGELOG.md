@@ -16,6 +16,13 @@
   `dsh.bundle.patch → ./dsh/cordis.patch.yml`）让 `dsh plugin add <git-url>`
   把整个仓库安装为 profile layer；`dsh/lib` 产物入库（对齐 dsh-memory），
   git clone 无需现场 build。
+- **修复 memory_* 工具的用户作用域错配**：`tools.ts` 此前用当前会话 id 作为
+  `user_id` 隔离作用域，而写入侧（capture）固定用 `global`，导致数据库按
+  `user_id` 硬隔离后，工具检索（`memory_recall` / `memory_user_md` /
+  `memory_stats` 等）永远查不到已存的记忆（同会话、跨会话皆失效）。现
+  `user_id` 统一回落为 fallback 作用域（`global`，与写入一致），会话 id 仅
+  作为 `session_id` 保留溯源；显式 `user` 参数仍可覆盖。新增
+  `tests/tools.test.ts`（4 用例）守护该行为。
 
 ## [0.1.0] — dsh 接入（未 release）
 

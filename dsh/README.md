@@ -53,6 +53,11 @@ pnpm build       # -> lib/index.mjs
 | `memory_user_md` | 渲染用户画像 markdown |
 | `memory_stats` | 记忆统计计数 |
 
+> **用户作用域**：所有 `memory_*` 工具的 `user_id` 统一落入 fallback 用户作用域
+> （`global`），与写入侧（capture / LLM-first）保持一致，因此记忆能在会话间
+> 共享与检索；当前会话 id 仅作为 `session_id` 记录归属溯源。调用方可通过可选的
+> `user` 参数显式指定其他用户作用域。
+
 ## Model Experience
 
 模型被注入一段系统提示，说明它拥有持久记忆以及哪个工具用于保存/读取，并被告知

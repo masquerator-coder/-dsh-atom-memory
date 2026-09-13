@@ -16,8 +16,26 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { PythonBridge } from './bridge.ts'
 
-/** Resolve the owning user/session for a tool call (falls back to a scope). */
-function scopeOf(exec: ToolRunContext, fallback: string): string {
+/**
+ * Resolve the **user** scope for a tool call.
+ *
+ * User scope must be stable across sessions so long-term memory is shared
+ * (the write side captures under the fixed fallback scope, e.g. `global`);
+ * using the current session id here would isolate every session from every
+ * other one and memory would never surface in a later session. The caller
+ * may still override with an explicit `user` argument.
+ */
+function userIdOf(exec: ToolRunContext, fallback: string): string {
+  return fallback
+}
+
+/**
+ * Resolve the **session** scope for a tool call (falls back to a scope).
+ *
+ * Used only for provenance (which session wrote the memory), never as the
+ * isolation scope — user isolation is governed by {@link userIdOf}.
+ */
+function sessionIdOf(exec: ToolRunContext, fallback: string): string {
   const sessionId = exec.agent?.session?.id
   return sessionId !== undefined ? sessionId : fallback
 }
@@ -53,8 +71,8 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
-      const uid = args.user ?? scopeOf(exec, scope)
-      return await call('add', { user_id: uid, session_id: scopeOf(exec, scope), text: args.content, turn_id: 0 })
+      const uid = args.user ?? userIdOf(exec, scope)
+      return await call('add', { user_id: uid, session_id: sessionIdOf(exec, scope), text: args.content, turn_id: 0 })
     },
   })))
 
@@ -76,7 +94,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
-      const uid = args.user ?? scopeOf(exec, scope)
+      const uid = args.user ?? userIdOf(exec, scope)
       const r = await call<any>('recall', {
         user_id: uid,
         query: args.query,
@@ -100,7 +118,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
     },
     async execute(args, exec) {
       if (!args.factId) throw new Error('memory_forget requires factId')
-      return await call('forget', { user_id: args.user ?? scopeOf(exec, scope), fact_id: args.factId })
+      return await call('forget', { user_id: args.user ?? userIdOf(exec, scope), fact_id: args.factId })
     },
   })))
 
@@ -118,7 +136,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
-      const uid = args.user ?? scopeOf(exec, scope)
+      const uid = args.user ?? userIdOf(exec, scope)
       const text = await call<string>('memory_md', { user_id: uid, max_tokens: deps.memoryMdTokens })
       return { text }
     },
@@ -138,7 +156,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
-      const uid = args.user ?? scopeOf(exec, scope)
+      const uid = args.user ?? userIdOf(exec, scope)
       const text = await call<string>('user_md', { user_id: uid })
       return { text }
     },
@@ -155,7 +173,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       render(_args, value) { return [{ type: 'text', text: JSON.stringify(value) }] },
     },
     async execute(args, exec) {
-      return await call('stats', { user_id: args.user ?? scopeOf(exec, scope) })
+      return await call('stats', { user_id: args.user ?? userIdOf(exec, scope) })
     },
   })))
 

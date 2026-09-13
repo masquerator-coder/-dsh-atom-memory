@@ -244,8 +244,25 @@ var PythonBridge = class {
 };
 //#endregion
 //#region src/tools.ts
-/** Resolve the owning user/session for a tool call (falls back to a scope). */
-function scopeOf(exec, fallback) {
+/**
+* Resolve the **user** scope for a tool call.
+*
+* User scope must be stable across sessions so long-term memory is shared
+* (the write side captures under the fixed fallback scope, e.g. `global`);
+* using the current session id here would isolate every session from every
+* other one and memory would never surface in a later session. The caller
+* may still override with an explicit `user` argument.
+*/
+function userIdOf(exec, fallback) {
+	return fallback;
+}
+/**
+* Resolve the **session** scope for a tool call (falls back to a scope).
+*
+* Used only for provenance (which session wrote the memory), never as the
+* isolation scope — user isolation is governed by {@link userIdOf}.
+*/
+function sessionIdOf(exec, fallback) {
 	const sessionId = exec.agent?.session?.id;
 	return sessionId !== void 0 ? sessionId : fallback;
 }
@@ -283,10 +300,10 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
-			const uid = args.user ?? scopeOf(exec, scope);
+			const uid = args.user ?? userIdOf(exec, scope);
 			return await call("add", {
 				user_id: uid,
-				session_id: scopeOf(exec, scope),
+				session_id: sessionIdOf(exec, scope),
 				text: args.content,
 				turn_id: 0
 			});
@@ -324,7 +341,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
-			const uid = args.user ?? scopeOf(exec, scope);
+			const uid = args.user ?? userIdOf(exec, scope);
 			const r = await call("recall", {
 				user_id: uid,
 				query: args.query,
@@ -365,7 +382,7 @@ function registerMemoryTools(deps) {
 		async execute(args, exec) {
 			if (!args.factId) throw new Error("memory_forget requires factId");
 			return await call("forget", {
-				user_id: args.user ?? scopeOf(exec, scope),
+				user_id: args.user ?? userIdOf(exec, scope),
 				fact_id: args.factId
 			});
 		}
@@ -390,7 +407,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
-			const uid = args.user ?? scopeOf(exec, scope);
+			const uid = args.user ?? userIdOf(exec, scope);
 			return { text: await call("memory_md", {
 				user_id: uid,
 				max_tokens: deps.memoryMdTokens
@@ -417,7 +434,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
-			const uid = args.user ?? scopeOf(exec, scope);
+			const uid = args.user ?? userIdOf(exec, scope);
 			return { text: await call("user_md", { user_id: uid }) };
 		}
 	})));
@@ -441,7 +458,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
-			return await call("stats", { user_id: args.user ?? scopeOf(exec, scope) });
+			return await call("stats", { user_id: args.user ?? userIdOf(exec, scope) });
 		}
 	})));
 	return disposers;
