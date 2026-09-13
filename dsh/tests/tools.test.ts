@@ -15,7 +15,7 @@ interface FakeBridge {
   call: ReturnType<typeof vi.fn>
 }
 
-function setup() {
+function setup(extract?: (text: string) => Promise<unknown[]>) {
   const bridge: FakeBridge = {
     call: vi.fn(),
   }
@@ -32,6 +32,7 @@ function setup() {
     fallbackScope: 'global',
     maxRecalledFacts: 10,
     memoryMdTokens: 500,
+    extract: extract as any,
   }
   registerMemoryTools(deps)
   return { bridge, registered }
@@ -97,5 +98,54 @@ describe('memory tools user scope', () => {
 
     await recall.execute({ query: 'x', user: 'alice' }, execWithSession('session-EEE'))
     expect(bridge.call.mock.calls.at(-1)![1]!.user_id).toBe('alice')
+  })
+})
+
+describe('memory_add LLM-first extraction', () => {
+  const candidates = [
+    { subject: '用户', predicate: '决策', object: '取消关键词门控', type: 'decision_rule' },
+  ]
+
+  it('persists typed candidates via persist_candidates when the LLM path yields them', async () => {
+    const extract = vi.fn(async () => candidates)
+    const { bridge, registered } = setup(extract)
+    bridge.call.mockResolvedValue({ candidate_id: 'cand-1' })
+
+    const add = registered.find((d) => d.name === 'memory_add')!
+    const result = (await add.execute({ content: '任意自由文本' }, execWithSession('session-FFF'))) as any
+
+    expect(extract).toHaveBeenCalledWith('任意自由文本')
+    const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    // Must NOT go through the rules-only `add` path (which drops free-form text).
+    expect(method).toBe('persist_candidates')
+    expect(params.candidates).toEqual(candidates)
+    expect(params.user_id).toBe('global')
+    expect(params.session_id).toBe('session-FFF')
+    expect(result.candidate_id).toBe('cand-1')
+  })
+
+  it('falls back to the rule path when the LLM returns no candidates', async () => {
+    const extract = vi.fn(async () => [])
+    const { bridge, registered } = setup(extract)
+    bridge.call.mockResolvedValue({ candidate_id: 'cand-2' })
+
+    const add = registered.find((d) => d.name === 'memory_add')!
+    await add.execute({ content: '我的发布流程是首先构建然后部署' }, execWithSession('session-GGG'))
+
+    const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    expect(method).toBe('add')
+    expect(params.text).toBe('我的发布流程是首先构建然后部署')
+  })
+
+  it('falls back to the rule path when the LLM path throws', async () => {
+    const extract = vi.fn(async () => { throw new Error('provider down') })
+    const { bridge, registered } = setup(extract)
+    bridge.call.mockResolvedValue({ candidate_id: 'cand-3' })
+
+    const add = registered.find((d) => d.name === 'memory_add')!
+    await add.execute({ content: '用户喜欢黑咖啡' }, execWithSession('session-HHH'))
+
+    const [method] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    expect(method).toBe('add')
   })
 })

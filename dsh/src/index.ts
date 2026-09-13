@@ -118,13 +118,16 @@ export function apply(ctx: Context, config: ConfigShape): void {
     }
   }
 
-  // Explicit memory tools.
+  // Explicit memory tools. `extract` is shared with the capture path so the
+  // model-driven `memory_add` uses the same LLM-first extraction (with the
+  // rule path as fallback) instead of the rules-only bridge `add` call.
   const disposers = registerMemoryTools({
     ctx,
     bridge,
     fallbackScope: FALLBACK_SCOPE,
     maxRecalledFacts: config.maxRecalledFacts ?? 10,
     memoryMdTokens: config.memoryMdTokens ?? 1500,
+    extract,
   })
   for (const d of disposers) ctx.effect(() => d)
 

@@ -301,9 +301,22 @@ function registerMemoryTools(deps) {
 		},
 		async execute(args, exec) {
 			const uid = args.user ?? userIdOf(exec, scope);
+			const sid = sessionIdOf(exec, scope);
+			if (deps.extract !== void 0) try {
+				const candidates = await deps.extract(args.content);
+				if (candidates.length > 0) return {
+					candidate_id: (await call("persist_candidates", {
+						user_id: uid,
+						session_id: sid,
+						turn_id: 0,
+						candidates
+					})).candidate_id ?? "",
+					status: "queued"
+				};
+			} catch {}
 			return await call("add", {
 				user_id: uid,
-				session_id: sessionIdOf(exec, scope),
+				session_id: sid,
 				text: args.content,
 				turn_id: 0
 			});
@@ -794,7 +807,8 @@ function apply(ctx, config) {
 		bridge,
 		fallbackScope: FALLBACK_SCOPE,
 		maxRecalledFacts: config.maxRecalledFacts ?? 10,
-		memoryMdTokens: config.memoryMdTokens ?? 1500
+		memoryMdTokens: config.memoryMdTokens ?? 1500,
+		extract
 	});
 	for (const d of disposers) ctx.effect(() => d);
 	registerCapture({

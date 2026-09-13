@@ -1,9 +1,13 @@
 /**
  * Explicit memory tools the model can call (design §4.3 / dsh memory surface).
  *
- * Each ``execute`` is a thin, structured delegation to the Python bridge. The
- * model never reasons about atomic facts itself — ``memory_add``/``memory_recall``
- * forward raw content and the store does extraction/retrieval downstream.
+ * Each ``execute`` is a thin, structured delegation to the Python bridge.
+ * ``memory_recall`` forwards the query and the store does retrieval; the model
+ * never reasons about atomic facts itself. ``memory_add`` is LLM-first: it runs
+ * the shared in-process extractor and ships typed candidates (falling back to
+ * the Python rule path when the LLM path is unavailable or yields nothing), so
+ * free-form content is not silently dropped by the rule engine's narrow
+ * patterns.
  *
  * Tools are the only model-visible surface: their ``output.schema`` keeps what
  * a model can read structured, and ``output.render`` gives the UI a readable
@@ -15,6 +19,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { PythonBridge } from './bridge.ts'
+import type { ExtractFn } from './llm-extractor.ts'
 
 /**
  * Resolve the **user** scope for a tool call.
@@ -46,6 +51,13 @@ export interface ToolDeps {
   fallbackScope: string
   maxRecalledFacts: number
   memoryMdTokens: number
+  /**
+   * LLM-first extractor (dsh default model). When present, ``memory_add``
+   * runs extraction in-process and ships typed candidates to the Python side
+   * via ``persist_candidates``; the raw ``add`` rule path is the fallback.
+   * Absent means the rule engine is the only extractor (original behaviour).
+   */
+  extract?: ExtractFn
 }
 
 /** Register all memory tools and return their disposers. */
@@ -72,7 +84,29 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
     },
     async execute(args, exec) {
       const uid = args.user ?? userIdOf(exec, scope)
-      return await call('add', { user_id: uid, session_id: sessionIdOf(exec, scope), text: args.content, turn_id: 0 })
+      const sid = sessionIdOf(exec, scope)
+      // LLM-first, exactly like the capture path: extract typed candidates in
+      // the dsh process (where the model lives) and persist them. This matters
+      // because the Python-side ``add`` path only runs the rule engine, which
+      // silently drops free-form facts (status 'skipped') that its narrow
+      // patterns do not match — e.g. the prose of a summarized note.
+      if (deps.extract !== undefined) {
+        try {
+          const candidates = await deps.extract(args.content)
+          if (candidates.length > 0) {
+            const r = await call<{ candidate_id?: string }>('persist_candidates', {
+              user_id: uid,
+              session_id: sid,
+              turn_id: 0,
+              candidates,
+            })
+            return { candidate_id: r.candidate_id ?? '', status: 'queued' }
+          }
+        } catch {
+          /* fall through to rule extraction */
+        }
+      }
+      return await call('add', { user_id: uid, session_id: sid, text: args.content, turn_id: 0 })
     },
   })))
 
