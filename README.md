@@ -257,6 +257,33 @@ Methods: `start`, `stop`, `health`, `add`, `recall`, `replace`, `forget`,
 Run `python -m pytest tests/test_rpc.py` to exercise the wire protocol end to
 end, and the `dsh/` package's own vitest + build gate for the host side.
 
+### Install as a dsh profile layer (git distribution)
+
+This repository is a dual-purpose package: the Python library at the root
+(`dsh_atom_memory/`), and the dsh Cordis plugin built from `dsh/src`. The
+**root `package.json` is the dsh bundle shell** — its `name`
+(`dsh-atom-memory-dsh`) matches the `cordis.patch.yml` plugin entry and its
+`dsh.bundle.patch` points at `./dsh/cordis.patch.yml`, so the whole repo
+installs as one dsh profile layer directly from a git URL (no separate npm
+package to publish):
+
+```bash
+dsh plugin --profile web add "https://atomgit.com/foqiang/dsh_atom_memory.git"
+```
+
+The host-side build output (`dsh/lib`) is **committed** (like `dsh-memory`)
+so a git checkout loads without a build step. To update it:
+
+```bash
+(cd dsh && pnpm build && pnpm test)
+```
+
+Verify the plugin mounted as a profile layer, not a plain dependency:
+
+```bash
+dsh --profile web --dump-config | findstr /C:"atom-memory"
+```
+
 ## Tests
 
 ```bash
