@@ -4,7 +4,7 @@ Exposes the full write/read/mutation surface:
 
     lifecycle  — start() / stop()
     write      — add(user, session, text)
-    read       — recall(), memory_md(), user_md()
+    read       — recall(), memory_md(), user_md(), summary()
     mutate     — replace(), forget()
     metrics    — stats()
 """
@@ -24,6 +24,7 @@ from .embedder import Embedder
 from .memory_md import generate_memory_md
 from .profile import derive_profile_from_facts, profile_md
 from .retriever import Retriever, estimate_tokens
+from .summarizer import SCOPE_GLOBAL, rebuild_summary
 from .worker import Worker
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,10 @@ class AtomMem:
             self._load_pending(user_id) if include_pending else []
         )
 
+        # Reads are authoritative: the write path debounces rebuilds and never
+        # reschedules a deferred one, so a summary can sit stale indefinitely.
+        # Refresh it here so recall always carries current content.
+        self._ensure_summary(user_id)
         summaries, summary_tokens = self._load_summaries(user_id)
 
         return {
@@ -312,6 +317,71 @@ class AtomMem:
             raise RuntimeError("AtomMem is not started; call start() first")
         derive_profile_from_facts(self.db, user_id)
         return profile_md(self.db, user_id, max_tokens)
+
+    async def summary(self, user_id: str) -> str:
+        """Render the user's aggregate summary as markdown.
+
+        The summary is a compact, lossy digest of the active facts — stable
+        attributes, preferences, workflows, recent events and light knowledge —
+        intended as the cheap "look first, then drill in with recall" view. It
+        is refreshed first when missing or stale.
+
+        Args:
+            user_id: The user whose summary is rendered.
+
+        Returns:
+            A markdown string. Contains an explicit empty notice when the user
+            has no active facts yet.
+        """
+        if self.db is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        self._ensure_summary(user_id)
+        rows = self.db.execute(
+            "SELECT scope, theme, text, version FROM summaries "
+            "WHERE user_id = ? AND stale = 0 ORDER BY scope",
+            (user_id,),
+        ).fetchall()
+        if not rows:
+            return (
+                f"# 摘要 (Summary) — {user_id}\n\n"
+                "_暂无摘要。_ (No summary yet — no active facts.)\n"
+            )
+        lines = [f"# 摘要 (Summary) — {user_id}", ""]
+        for r in rows:
+            lines.append(f"## {r['theme'] or r['scope']} (v{r['version']})")
+            lines.append("")
+            lines.append(r["text"])
+            lines.append("")
+        lines.append("> 生成于 dsh-atom-memory · 由活跃事实聚合而成")
+        return "\n".join(lines)
+
+    def _ensure_summary(self, user_id: str) -> None:
+        """Rebuild the user's summary when it is missing or stale.
+
+        The write path (``_after_mutation``) marks summaries stale and enqueues
+        a debounced rebuild, but a rebuild deferred by the debounce is never
+        rescheduled — so a summary can remain stale forever once mutations stop.
+        Read paths call this to guarantee current content. The aggregate is pure
+        in-process string work over the facts table (no model call), so doing it
+        on demand is cheap.
+
+        Args:
+            user_id: The user whose summary should be current.
+        """
+        if self.db is None:
+            return
+        row = self.db.execute(
+            "SELECT stale FROM summaries WHERE user_id = ? AND scope = ?",
+            (user_id, SCOPE_GLOBAL),
+        ).fetchone()
+        if row is not None and not row["stale"]:
+            return
+        rebuild_summary(
+            self.db,
+            user_id,
+            scope=SCOPE_GLOBAL,
+            max_tokens=self.config.memory_md_token_limit,
+        )
 
     # -- mutation surface -----------------------------------------------------------
 

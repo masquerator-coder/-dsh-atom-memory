@@ -121,10 +121,17 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
     output: {
       schema: { type: 'object', additionalProperties: true },
       render(_args, value) {
-        const v = value as { facts?: Array<{ subject?: string; predicate?: string; object?: string }> }
-        const items = v.facts ?? []
-        return [{ type: 'text', text: items.length === 0 ? '（无相关记忆）' : items
-          .map(f => `- ${f.subject ?? ''}${f.predicate ?? ''}: ${f.object ?? ''}`).join('\n') }]
+        const v = value as {
+          facts?: Array<{ subject?: string; predicate?: string; object?: string }>
+          summaries?: Array<{ text?: string }>
+        }
+        const facts = v.facts ?? []
+        const summaries = (v.summaries ?? []).map(s => (s.text ?? '').trim()).filter(Boolean)
+        const blocks: string[] = []
+        if (summaries.length > 0) blocks.push(`【摘要】${summaries.join('；')}`)
+        blocks.push(facts.length === 0 ? '（无相关记忆）' : facts
+          .map(f => `- ${f.subject ?? ''}${f.predicate ?? ''}: ${f.object ?? ''}`).join('\n'))
+        return [{ type: 'text', text: blocks.join('\n') }]
       },
     },
     async execute(args, exec) {
@@ -135,7 +142,34 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
         token_budget: 4000,
         top_k: args.topK ?? deps.maxRecalledFacts,
       })
-      return { facts: r.facts ?? [], token_count: r.token_count ?? 0 }
+      // Carry the aggregate summary alongside the ranked facts: the Python
+      // side already computes and returns it, and it is the cheap "what is
+      // known overall" context that makes the drilled-in facts interpretable.
+      return {
+        facts: r.facts ?? [],
+        summaries: r.summaries ?? [],
+        token_count: r.token_count ?? 0,
+      }
+    },
+  })))
+
+  disposers.push(ctx.tools.register(defineTool({
+    name: 'memory_summary',
+    description: '查看当前用户记忆的聚合摘要（稳定属性、偏好、工作流程、近期事件、经验教训）。适合先看摘要，再按需用 memory_recall 查明细。',
+    parameters: {
+      user: { type: 'string', description: '可选：归属用户 id（默认当前会话）' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render(_args, value) {
+        const v = value as { text?: string }
+        return [{ type: 'text', text: v.text ?? '' }]
+      },
+    },
+    async execute(args, exec) {
+      const uid = args.user ?? userIdOf(exec, scope)
+      const text = await call<string>('summary', { user_id: uid })
+      return { text }
     },
   })))
 

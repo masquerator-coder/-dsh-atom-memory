@@ -347,10 +347,15 @@ function registerMemoryTools(deps) {
 				additionalProperties: true
 			},
 			render(_args, value) {
-				const items = value.facts ?? [];
+				const v = value;
+				const facts = v.facts ?? [];
+				const summaries = (v.summaries ?? []).map((s) => (s.text ?? "").trim()).filter(Boolean);
+				const blocks = [];
+				if (summaries.length > 0) blocks.push(`【摘要】${summaries.join("；")}`);
+				blocks.push(facts.length === 0 ? "（无相关记忆）" : facts.map((f) => `- ${f.subject ?? ""}${f.predicate ?? ""}: ${f.object ?? ""}`).join("\n"));
 				return [{
 					type: "text",
-					text: items.length === 0 ? "（无相关记忆）" : items.map((f) => `- ${f.subject ?? ""}${f.predicate ?? ""}: ${f.object ?? ""}`).join("\n")
+					text: blocks.join("\n")
 				}];
 			}
 		},
@@ -364,8 +369,33 @@ function registerMemoryTools(deps) {
 			});
 			return {
 				facts: r.facts ?? [],
+				summaries: r.summaries ?? [],
 				token_count: r.token_count ?? 0
 			};
+		}
+	})));
+	disposers.push(ctx.tools.register(defineTool({
+		name: "memory_summary",
+		description: "查看当前用户记忆的聚合摘要（稳定属性、偏好、工作流程、近期事件、经验教训）。适合先看摘要，再按需用 memory_recall 查明细。",
+		parameters: { user: {
+			type: "string",
+			description: "可选：归属用户 id（默认当前会话）"
+		} },
+		output: {
+			schema: {
+				type: "object",
+				additionalProperties: true
+			},
+			render(_args, value) {
+				return [{
+					type: "text",
+					text: value.text ?? ""
+				}];
+			}
+		},
+		async execute(args, exec) {
+			const uid = args.user ?? userIdOf(exec, scope);
+			return { text: await call("summary", { user_id: uid }) };
 		}
 	})));
 	disposers.push(ctx.tools.register(defineTool({
@@ -483,8 +513,9 @@ function registerMemoryTools(deps) {
 const AWARENESS_SECTION = "atom-memory-awareness";
 /** Section name of the injected frozen snapshot (also the dedup marker). */
 const SNAPSHOT_SECTION = "atom-memory-snapshot";
-const AWARENESS_TEXT = `You have persistent long-term memory. Use memory_recall to retrieve
-memory, memory_add to store memory, and memory_forget to delete memory. Save any
+const AWARENESS_TEXT = `You have persistent long-term memory. Use memory_summary for a compact
+overview of what is already known, memory_recall to retrieve specific facts,
+memory_add to store memory, and memory_forget to delete memory. Save any
 preference or decision the user states explicitly. Whenever you are working
 through any content or performing any task and come across long-lived, reusable
 work facts — such as decisions, workflows, lessons learned, preferences,

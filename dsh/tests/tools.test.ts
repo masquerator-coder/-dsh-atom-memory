@@ -74,6 +74,42 @@ describe('memory tools user scope', () => {
     expect(bridge.call.mock.calls.at(-1)![1]!.user_id).toBe('global')
   })
 
+  it('memory_recall surfaces the aggregate summary instead of dropping it', async () => {
+    const { bridge, registered } = setup()
+    const recall = registered.find((d) => d.name === 'memory_recall')!
+    bridge.call.mockResolvedValue({
+      facts: [{ subject: '用户', predicate: '偏好', object: '黑咖啡' }],
+      summaries: [{ text: '偏好 黑咖啡 (喜欢)' }],
+      token_count: 12,
+    })
+
+    const result = (await recall.execute({ query: '咖啡' }, execWithSession('session-XXX'))) as any
+    expect(result.summaries).toEqual([{ text: '偏好 黑咖啡 (喜欢)' }])
+    expect(result.facts).toHaveLength(1)
+
+    // The rendered text must show the summary, not just the facts.
+    const rendered = recall.output!.render!({ query: '咖啡' }, result) as Array<{ text: string }>
+    expect(rendered[0]!.text).toContain('【摘要】')
+    expect(rendered[0]!.text).toContain('偏好 黑咖啡 (喜欢)')
+    expect(rendered[0]!.text).toContain('- 用户偏好: 黑咖啡')
+  })
+
+  it('memory_summary fetches the aggregate summary under the fallback scope', async () => {
+    const { bridge, registered } = setup()
+    const summary = registered.find((d) => d.name === 'memory_summary')!
+    expect(summary).toBeTruthy()
+    bridge.call.mockResolvedValue('# 摘要 (Summary) — global\n\n职业: 工程师')
+
+    const result = (await summary.execute({}, execWithSession('session-YYY'))) as any
+    const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    expect(method).toBe('summary')
+    expect(params.user_id).toBe('global')
+    expect(result.text).toContain('职业: 工程师')
+
+    const rendered = summary.output!.render!({}, result) as Array<{ text: string }>
+    expect(rendered[0]!.text).toContain('职业: 工程师')
+  })
+
   it('memory_stats / memory_user_md / memory_memory_md use the fallback user scope', async () => {
     const { bridge, registered } = setup()
     bridge.call.mockResolvedValue({})

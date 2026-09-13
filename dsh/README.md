@@ -47,7 +47,8 @@ pnpm build       # -> lib/index.mjs
 | 工具 | 说明 |
 | --- | --- |
 | `memory_add` | 显式记住原始内容（LLM-first → 规则回退） |
-| `memory_recall` | 语义+全文混合召回，返回 `type`/`content`/`final_score` |
+| `memory_summary` | 返回记忆的聚合摘要（属性/偏好/工作流程/事件/轻量知识），"先看摘要、再查明细"入口 |
+| `memory_recall` | 语义+全文混合召回，返回 `type`/`content`/`final_score` **以及聚合摘要** |
 | `memory_forget` | 软删除（retract）一条事实 |
 | `memory_memory_md` | 渲染 memory.md（含 fact_id） |
 | `memory_user_md` | 渲染用户画像 markdown |
@@ -61,8 +62,13 @@ pnpm build       # -> lib/index.mjs
 ## Model Experience
 
 模型被注入一段系统提示，说明它拥有持久记忆以及哪个工具用于保存/读取，并被告知
-「用户明确陈述的偏好/决策要保存」。`memory_recall` 返回结构化事实，模型可读取
-`type` 与 `content` 字段；长文知识（SOP/few-shot）不进摘要但仍可被召回。
+「用户明确陈述的偏好/决策要保存」。`memory_summary` 与 `memory_recall` 都会返回
+聚合摘要，模型可先读摘要再按需查明细；召回结果同时返回结构化事实的 `type` 与
+`content` 字段；长文知识（SOP/few-shot）不进摘要但仍可被召回。
+
+> **摘要的读取语义**：写入侧对摘要重建做了防抖，而被防抖推迟的重建不会被重新排期，
+> 因此摘要可能长期停留在 `stale`。读取路径（`recall` / `summary`）会在返回前按需
+> 重建，保证读到的摘要始终是当前内容（聚合是纯内存字符串工作，无模型调用，代价低）。
 
 ## Known Limitations
 

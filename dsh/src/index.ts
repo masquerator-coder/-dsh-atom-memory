@@ -3,7 +3,7 @@
  *
  * A Cordis plugin that:
  *  - spawns and manages the `atom_memory.rpc` Python child process,
- *  - exposes `memory_*` tools (add/recall/forget/memory_md/user_md/stats),
+ *  - exposes `memory_*` tools (add/recall/summary/forget/memory_md/user_md/stats),
  *  - wires an LLM-first extractor that uses the dsh default model and ships
  *    typed candidates to Python for persistence (rules remain the fallback),
  *  - registers durable capture hooks (per-message, pre-compression rescue,

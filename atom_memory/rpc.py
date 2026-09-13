@@ -70,6 +70,7 @@ _METHODS: Dict[str, str] = {
     "forget": "forget",
     "memory_md": "memory_md",
     "user_md": "user_md",
+    "summary": "summary",
     "stats": "stats",
 }
 

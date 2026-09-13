@@ -33,8 +33,9 @@ const AWARENESS_SECTION = 'atom-memory-awareness'
 /** Section name of the injected frozen snapshot (also the dedup marker). */
 const SNAPSHOT_SECTION = 'atom-memory-snapshot'
 
-const AWARENESS_TEXT = `You have persistent long-term memory. Use memory_recall to retrieve
-memory, memory_add to store memory, and memory_forget to delete memory. Save any
+const AWARENESS_TEXT = `You have persistent long-term memory. Use memory_summary for a compact
+overview of what is already known, memory_recall to retrieve specific facts,
+memory_add to store memory, and memory_forget to delete memory. Save any
 preference or decision the user states explicitly. Whenever you are working
 through any content or performing any task and come across long-lived, reusable
 work facts — such as decisions, workflows, lessons learned, preferences,
