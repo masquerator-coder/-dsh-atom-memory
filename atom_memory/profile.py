@@ -181,8 +181,6 @@ def profile_md(
         lines.append(line)
         budget -= estimate_tokens(line)
 
-    lines.append("")
-    lines.append(f"> 生成于 dsh-atom-memory")
     return "\n".join(lines)
 
 

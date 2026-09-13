@@ -55,8 +55,7 @@ def generate_memory_md(
         kept += 1
 
     lines.append("")
-    lines.append(f"> {kept} 条事实 (facts) · "
-                 f"生成于 dsh-atom-memory · 含 fact_id 作为唯一引用")
+    lines.append(f"> {kept} 条事实 (facts) · 含 fact_id 作为唯一引用")
     if budget_exhausted:
         lines.append(f"> ⚠ 超出 token 预算，已裁剪（限制 {max_tokens}）")
 
