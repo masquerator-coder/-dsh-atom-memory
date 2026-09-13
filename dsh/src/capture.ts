@@ -4,14 +4,16 @@
  * These hooks turn conversation into memory automatically and, crucially,
  * rescue facts that would otherwise be lost:
  *
- *  1. **Per-message capture** — `user/message` durable events whose text carries
- *     a fact-worthy signal (keyword gate) are submitted for extraction
- *     immediately.
+ *  1. **Per-message capture** — `user/message` durable events whose text
+ *     carries a fact-worthy signal are submitted for extraction
+ *     immediately. Every direct user message is captured; whether it becomes
+ *     a fact is decided downstream by the LLM extractor (or rule fallback),
+ *     not by a brittle keyword gate.
  *  2. **Pre-compression rescue** — when the context window is about to be
  *     compacted (`llm/stream` with `purpose: 'compaction'`), the session's
- *     recent, strongly-signalled but not-yet-stored user messages are re-scanned
- *     and saved *before* compression so key facts survive the fold. The hook
- *     always calls `next()` — compression is never blocked.
+ *     recent not-yet-stored user messages are re-scanned and saved *before*
+ *     compression so key facts survive the fold. The hook always calls
+ *     `next()` — compression is never blocked.
  *  3. **Periodic nudge** — a timer periodically re-scans recent direct user
  *     messages so facts the LLM was too busy to save are not lost.
  *
@@ -27,19 +29,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-
-/** Strong-fact signal keywords: only messages containing these are captured. */
-const TRIGGERS = [
-  '喜欢', '偏好', '习惯', '不想', '不喜欢', '厌恶', '讨厌',
-  '职业', '家乡', '毕业于', '住',
-  '做了', '完成了', '遇到', '发生', '上线', '部署',
-  '流程', '步骤', '经验', '教训', '心得', 'SOP', '标准流程',
-  '当', '应该', '不要', '必须', '记得', '记住', '请记住',
-]
-
-export function hasSignal(text: string): boolean {
-  return TRIGGERS.some(t => text.includes(t))
-}
 
 interface MessageEntry {
   seq: number
@@ -94,13 +83,12 @@ export function registerCapture(deps: CaptureDeps, opts: CaptureOptions): (() =>
     recent.set(sessionId, list)
   }
 
-  /** Re-scan recent messages for strong signals not yet captured. */
+  /** Re-scan recent messages for those not yet captured. */
   const sweep = async (sessionId: string): Promise<void> => {
     const list = recent.get(sessionId)
     if (!list) return
     for (const entry of list) {
       if (entry.captured) continue
-      if (!hasSignal(entry.text)) continue
       entry.captured = true // mark before awaiting so a retry doesn't duplicate
       await capture(entry.text, sessionId).catch(() => { /* best-effort */ })
     }
@@ -114,11 +102,14 @@ export function registerCapture(deps: CaptureDeps, opts: CaptureOptions): (() =>
       const text = userMessageText(event)
       if (text.trim().length === 0) return
       const seq = (event as { seq?: unknown }).seq as number | undefined ?? 0
-      const entry: MessageEntry = { seq, text, captured: hasSignal(text) }
+      // Capture every direct user message unconditionally. Whether it holds a
+      // fact worth remembering is decided downstream by the LLM extractor (or
+      // the rule fallback), not by a fixed keyword list. `captured` is marked
+      // before submit so the nudge/compaction sweep does not resend it.
+      const entry: MessageEntry = { seq, text, captured: false }
+      entry.captured = true // claimed; sweep must not resubmit
       push(session.id, entry)
-      if (entry.captured) {
-        void capture(text, session.id).catch(() => { /* best-effort */ })
-      }
+      void capture(text, session.id).catch(() => { /* best-effort */ })
     }))
   }
 
@@ -126,8 +117,8 @@ export function registerCapture(deps: CaptureDeps, opts: CaptureOptions): (() =>
   if (opts.preCompressionCapture) {
     disposers.push(ctx.on('llm/stream', async function* (options: GenerateOptions, next) {
       if (options.purpose === 'compaction' && options.sessionId) {
-        // Rescue strongly-signalled, not-yet-stored messages before the
-        // compaction request leaves. Never blocks the request itself.
+        // Rescue not-yet-stored messages before the compaction request leaves.
+        // Never blocks the request itself.
         try {
           await sweep(String(options.sessionId))
         } catch {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { registerCapture, hasSignal } from '../src/capture.ts'
+import { registerCapture } from '../src/capture.ts'
 
 interface FakeSessionEvent {
   type: string
@@ -16,15 +16,8 @@ function makeCtx() {
   return { ctx: { on } as any, handlers, on }
 }
 
-describe('hasSignal', () => {
-  it('detects strong-fact keywords', () => {
-    expect(hasSignal('用户喜欢黑咖啡')).toBe(true)
-    expect(hasSignal('这只是一个普通打招呼')).toBe(false)
-  })
-})
-
 describe('registerCapture', () => {
-  it('fires capture for a direct user message with a signal', async () => {
+  it('fires capture for any direct user message (no keyword gate)', async () => {
     const { ctx, handlers } = makeCtx()
     const capture = vi.fn(async () => {})
     registerCapture(
@@ -33,13 +26,14 @@ describe('registerCapture', () => {
     )
     expect(ctx.on).toHaveBeenCalledWith('session/event', expect.any(Function))
     const handler = handlers[0]
+    // No strong-fact keyword present, but capture must still fire.
     handler({ id: 's1' }, {
       type: 'user/message',
-      data: { content: [{ type: 'text', text: '用户喜欢黑咖啡' }], source: { kind: 'user' } },
+      data: { content: [{ type: 'text', text: '总结我的obsidian工作笔记' }], source: { kind: 'user' } },
       seq: 1,
     })
     await new Promise(r => setTimeout(r, 10))
-    expect(capture).toHaveBeenCalledWith('用户喜欢黑咖啡', 's1')
+    expect(capture).toHaveBeenCalledWith('总结我的obsidian工作笔记', 's1')
   })
 
   it('does not fire for plugin-sourced content', async () => {
