@@ -1,11 +1,11 @@
 """Tests for the validation chain (validator.py, spec order:
-empty -> confidence -> idempotency -> conflict -> privacy)."""
+empty -> degenerate -> confidence -> idempotency -> conflict -> privacy)."""
 
 from __future__ import annotations
 
 from atom_memory.db import connect_for_tests
 from atom_memory.models import FactCandidate
-from atom_memory.validator import validate
+from atom_memory.validator import _predicate_core, validate
 
 
 def make(**overrides) -> FactCandidate:
@@ -372,4 +372,66 @@ def test_semantic_attribute_stays_single_valued():
         assert not r.ok and r.kind == "conflict"
     finally:
         conn.close()
+
+
+# ---- degenerate: placeholder / predicate-echo objects ---------------------------
+#
+# Real-world junk observed in the live store: describing the memory feature
+# itself produced facts such as 「起到的作用: 起到的作用」 and
+# 「被谁调用: 被调用的对象」, which polluted the summary and memory.md.
+
+def test_object_echoing_predicate_fails():
+    """Rule A: the object merely repeats the predicate."""
+    r = validate(make(candidate_id="c1", subject="summary（摘要）",
+                      predicate="起到的作用", object="起到的作用"))
+    assert not r.ok and r.kind == "degenerate"
+
+
+def test_object_echoing_subject_fails():
+    """Rule A also covers an object that repeats the subject."""
+    r = validate(make(candidate_id="c1", subject="用户", predicate="说明", object="用户"))
+    assert not r.ok and r.kind == "degenerate"
+
+
+def test_placeholder_object_fails():
+    """Rule B: a known placeholder phrase is rejected outright."""
+    for placeholder in ("待定", "未知", "其他", "对象"):
+        r = validate(make(candidate_id="c1", predicate="部署时间", object=placeholder))
+        assert not r.ok and r.kind == "degenerate", placeholder
+
+
+def test_predicate_core_echo_fails():
+    """Rule C: object reuses the predicate core and ends in a generic head."""
+    r = validate(make(candidate_id="c1", subject="summary（摘要）",
+                      predicate="被谁调用", object="被调用的对象"))
+    assert not r.ok and r.kind == "degenerate"
+
+
+def test_descriptive_object_is_not_flagged():
+    """Rule C's length guard keeps informative objects alive."""
+    r = validate(make(candidate_id="c1", subject="用户", predicate="角色",
+                      object="项目经理的角色"))
+    assert r.ok, r.reason
+
+
+def test_path_like_object_is_not_flagged():
+    """Ordinary values (paths, names) must survive the new check."""
+    r = validate(make(candidate_id="c1", subject="用户", predicate="obsidian笔记位置",
+                      object=r"C:\Users\fuqia\Documents\OSpace"))
+    assert r.ok, r.reason
+    r2 = validate(make(candidate_id="c2", subject="用户", predicate="名字", object="小强哥"))
+    assert r2.ok, r2.reason
+
+
+def test_degenerate_reported_before_confidence():
+    """Ordering: the content check runs before the numeric one."""
+    r = validate(make(candidate_id="c1", predicate="部署时间", object="待定", confidence=2.0))
+    assert r.kind == "degenerate"
+
+
+def test_predicate_core_drops_longer_question_words_first():
+    """'哪里' must not be shortened to a stray '里' by the shorter '哪'."""
+    core = _predicate_core("数据在哪里")
+    assert "里" not in core
+    assert "数据" in core
 

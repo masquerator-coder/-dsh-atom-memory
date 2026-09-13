@@ -132,7 +132,8 @@ class ValidationResult:
     Attributes:
         ok: Whether the candidate passed validation and may be persisted.
         kind: Machine-readable reason category (e.g. ``empty``,
-            ``confidence``, ``idempotent``, ``conflict``, ``privacy``).
+            ``degenerate``, ``confidence``, ``idempotent``, ``conflict``,
+            ``privacy``).
         reason: Human-readable explanation.
         candidate_id: The candidate this result refers to.
         conflict_with: When ``kind == "conflict"``, the fact_id the candidate

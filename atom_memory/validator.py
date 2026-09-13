@@ -3,7 +3,7 @@
 The validator applies a fixed sequence of checks to a candidate before it is
 allowed into the ``facts`` (and derived FTS / vector) tables:
 
-    empty -> confidence -> idempotency -> conflict -> privacy
+    empty -> degenerate -> confidence -> idempotency -> conflict -> privacy
 
 Checks that need to look at existing data ("idempotency" and "conflict")
 receive the live connection so they can query stored facts.
@@ -32,6 +32,43 @@ MULTI_VALUED_PREDICATES = {
     "偏好", "兴趣", "爱好", "喜欢", "不喜欢", "习惯", "擅长",
 }
 
+# ---- degenerate-fact filtering -------------------------------------------------
+#
+# When a descriptive sentence *about the system itself* reaches the extractor it
+# can yield a fact whose object merely echoes its own predicate
+# ("被谁调用 -> 被调用的对象", "起到的作用 -> 起到的作用"). Such facts carry no
+# information, yet they are persisted and then pollute the rendered summary and
+# ``memory.md``. They are rejected as ``degenerate``.
+
+# Question words removed from a predicate to obtain its "core".
+_INTERROGATIVES = (
+    "什么时候", "什么样", "为什么", "怎么样",
+    "什么", "哪儿", "哪里", "何时", "如何", "怎么", "多少", "是否",
+    "谁", "啥", "哪", "几",
+)
+
+# Generic head nouns. An object that *both* reuses the predicate core and ends
+# with one of these is a placeholder, not a real value.
+_GENERIC_HEADS = (
+    "对象", "作用", "东西", "内容", "信息", "事情", "情况", "方面",
+    "角色", "功能", "人员", "相关方", "值",
+)
+
+# Whole-object placeholders rejected outright (normalized to lower case).
+_PLACEHOLDER_OBJECTS = frozenset({
+    "起到的作用", "被调用的对象", "被调用者", "调用者", "对象", "作用",
+    "东西", "内容", "信息", "事情", "情况", "方面", "功能", "角色",
+    "未知", "待定", "不详", "其他", "其它", "无", "n/a", "na", "none", "null",
+})
+
+# Minimum share of the object length that the predicate core must cover for the
+# echo heuristic to fire. Guards against false positives such as
+# "角色: 项目经理的角色" (core 2 chars / object 7 chars = 0.29 -> kept).
+_ECHO_MIN_RATIO = 0.5
+
+# Punctuation/whitespace trimmed from both ends during normalization.
+_TRIM_CHARS = " \t\r\n。．.！！?？；;，,、：:"
+
 
 def validate(
     candidate: FactCandidate,
@@ -59,22 +96,27 @@ def validate(
     if not empty.ok:
         return empty
 
-    # 2. Confidence
+    # 2. Degenerate (placeholder / predicate-echo objects)
+    degen = _check_degenerate(candidate)
+    if not degen.ok:
+        return degen
+
+    # 3. Confidence
     conf = _check_confidence(candidate)
     if not conf.ok:
         return conf
 
-    # 3. Idempotency
+    # 4. Idempotency
     idem = _check_idempotency(candidate, conn)
     if not idem.ok:
         return idem
 
-    # 4. Conflict
+    # 5. Conflict
     conflict = _check_conflict(candidate, conn)
     if not conflict.ok:
         return conflict
 
-    # 5. Privacy
+    # 6. Privacy
     priv = _check_privacy(candidate, privacy_filter)
     if not priv.ok:
         return priv
@@ -100,6 +142,86 @@ def _check_empty(candidate: FactCandidate) -> ValidationResult:
             candidate.candidate_id,
         )
     return ValidationResult.pass_(candidate.candidate_id)
+
+
+def _check_degenerate(candidate: FactCandidate) -> ValidationResult:
+    """Reject a candidate whose object carries no information.
+
+    Three independent rules, applied to the normalized subject / predicate /
+    object:
+
+    A. the object merely repeats the subject or the predicate
+       ("起到的作用 -> 起到的作用");
+    B. the object is a known placeholder phrase ("对象", "待定", ...);
+    C. the object reuses the predicate core (the predicate with its question
+       words removed) *and* ends with a generic head noun, while covering at
+       least :data:`_ECHO_MIN_RATIO` of the object
+       ("被谁调用 -> 被调用的对象").
+
+    The length guard in C keeps informative objects such as
+    "角色: 项目经理的角色" alive.
+    """
+    subject = _normalize(candidate.subject)
+    predicate = _normalize(candidate.predicate)
+    obj = _normalize(candidate.object)
+
+    # A. Object echoes the subject or the predicate.
+    if obj and obj in (subject, predicate):
+        echoed = "subject" if obj == subject else "predicate"
+        return ValidationResult.fail(
+            "degenerate",
+            f"object '{candidate.object}' only echoes the {echoed}",
+            candidate.candidate_id,
+        )
+
+    # B. Object is a placeholder phrase.
+    if obj in _PLACEHOLDER_OBJECTS:
+        return ValidationResult.fail(
+            "degenerate",
+            f"object '{candidate.object}' is a placeholder with no content",
+            candidate.candidate_id,
+        )
+
+    # C. Object reuses the predicate core and ends with a generic head noun.
+    core = _predicate_core(predicate)
+    if (
+        core
+        and core in obj
+        and obj.endswith(_GENERIC_HEADS)
+        and len(core) >= _ECHO_MIN_RATIO * len(obj)
+    ):
+        return ValidationResult.fail(
+            "degenerate",
+            f"object '{candidate.object}' restates the predicate "
+            f"'{candidate.predicate}' as a placeholder",
+            candidate.candidate_id,
+        )
+
+    return ValidationResult.pass_(candidate.candidate_id)
+
+
+def _normalize(value: Optional[str]) -> str:
+    """Lower-case, collapse whitespace and trim surrounding punctuation."""
+    text = " ".join(str(value or "").split())
+    text = text.strip(_TRIM_CHARS)
+    # Drop a leading/trailing possessive particle ("的的作用" -> "作用").
+    while len(text) > 1 and text.startswith("的"):
+        text = text[1:]
+    while len(text) > 1 and text.endswith("的"):
+        text = text[:-1]
+    return text.lower()
+
+
+def _predicate_core(predicate: str) -> str:
+    """Return the predicate with its question words removed.
+
+    Longer question words are removed first so that "哪里" is not reduced to a
+    stray "里" by the shorter "哪".
+    """
+    core = predicate
+    for word in sorted(_INTERROGATIVES, key=len, reverse=True):
+        core = core.replace(word, "")
+    return core.strip(_TRIM_CHARS).strip()
 
 
 def _check_confidence(candidate: FactCandidate) -> ValidationResult:

@@ -39,6 +39,13 @@ Implemented incrementally behind human review gates — **all four stages done**
   and four knowledge types (`sop` / `decision_rule` / `few_shot` / `lesson`):
   light ones render in summaries, long-form ones stay searchable but are
   excluded from the summary text.
+- **Degenerate-fact filtering (done).** The validation chain gained a
+  `degenerate` check, giving the order `empty -> degenerate -> confidence ->
+  idempotency -> conflict -> privacy`. It rejects facts whose object merely
+  echoes the subject or predicate, is a known placeholder, or restates the
+  predicate core while ending in a generic head noun
+  (`起到的作用 -> 起到的作用`, `被谁调用 -> 被调用的对象`). Such facts carry no
+  information but used to pollute the rendered summary and `memory.md`.
 
 ## Installation
 
@@ -295,7 +302,8 @@ pytest tests/test_integration.py -v
 The suite covers storage migrations (including v1→v2 `type` and v2→v3 `content`
 upgrades), rule extraction (semantic / procedural / episodic + the
 `lesson` / `sop` / `decision_rule` knowledge categories), the validation chain
-(episodic non-conflict, procedural single-valued), retrieval, derived views
+(episodic non-conflict, procedural single-valued, degenerate
+placeholder/predicate-echo rejection), retrieval, derived views
 (three-type summary bucketing + light-vs-long knowledge inclusion), and the
 end-to-end pipeline (add/recall/replace/forget/memory_md/summarize/idempotency,
 plus knowledge facts persisting `type` / `content` through recall and
