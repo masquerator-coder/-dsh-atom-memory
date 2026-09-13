@@ -86,7 +86,7 @@ export function buildLlmExtractor(
     const messages = [
       createUserMessage({
         content: [{ type: 'text', text }],
-        source: { kind: 'plugin', plugin: 'dsh-atom-memory-dsh' } as never,
+        source: { kind: 'plugin', plugin: 'dsh-atom-memory' } as never,
       }),
     ]
     const options: GenerateOptions = {
@@ -152,3 +152,4 @@ export function parseCandidates(raw: string): ExtractedCandidate[] {
   }
   return out
 }
+

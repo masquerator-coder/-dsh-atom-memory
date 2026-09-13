@@ -1,7 +1,7 @@
 """NDJSON stdio RPC service — the bridge entry point for the dsh plugin.
 
 The dsh plugin (``dsh/`` npm subpackage) spawns this module as a long-lived
-child process (``python -m dsh_atom_memory.rpc``) and talks to it over plain
+child process (``python -m atom_memory.rpc``) and talks to it over plain
 stdio using newline-delimited JSON. This keeps the pure-Python library fully
 process-isolated from the Node host: the library stays free of any dsh / Node
 dependency, and the dsh side never imports Python directly.
@@ -32,7 +32,7 @@ Wire protocol (one JSON object per line):
 Lifecycle:
 
 - The host sends ``{"method": "start"}`` with startup configuration; the service
-  builds an :class:`~dsh_atom_memory.api.AtomMem` and starts it.
+  builds an :class:`~atom_memory.api.AtomMem` and starts it.
 - The host sends ``{"method": "stop"}``; the service stops AtomMem (flushing the
   worker / closing the DB) and exits.
 
@@ -43,7 +43,7 @@ operations (``forget_all`` reads active ``fact_id``s then enqueues public
 
 Run directly (debug)::
 
-    python -m dsh_atom_memory.rpc
+    python -m atom_memory.rpc
 """
 
 from __future__ import annotations
@@ -324,7 +324,7 @@ class RpcServer:
 
 
 async def main() -> None:
-    """Entry point for ``python -m dsh_atom_memory.rpc``."""
+    """Entry point for ``python -m atom_memory.rpc``."""
     handler = _StdErrLoggingHandler()
     logging.basicConfig(level=logging.WARNING, handlers=[handler])
     server = RpcServer()
@@ -346,3 +346,4 @@ class _StdErrLoggingHandler(logging.Handler):
 
 if __name__ == "__main__":
     asyncio.run(main())
+

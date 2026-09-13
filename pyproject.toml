@@ -32,10 +32,11 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["dsh_atom_memory*"]
+include = ["atom_memory*"]
 
 [tool.setuptools.package-data]
-dsh_atom_memory = ["migrations/*.sql"]
+atom_memory = ["migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+

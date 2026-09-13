@@ -3,9 +3,9 @@ empty -> confidence -> idempotency -> conflict -> privacy)."""
 
 from __future__ import annotations
 
-from dsh_atom_memory.db import connect_for_tests
-from dsh_atom_memory.models import FactCandidate
-from dsh_atom_memory.validator import validate
+from atom_memory.db import connect_for_tests
+from atom_memory.models import FactCandidate
+from atom_memory.validator import validate
 
 
 def make(**overrides) -> FactCandidate:
@@ -313,3 +313,4 @@ def test_blank_privacy_filled_from_filter():
 def test_valid_candidate_passes():
     r = validate(make())
     assert r.ok and r.kind == "ok"
+

@@ -1,8 +1,8 @@
 /**
- * dsh-atom-memory-dsh — dsh-side integration for the Python memory library.
+ * dsh-atom-memory — dsh-side integration for the Python memory library.
  *
  * A Cordis plugin that:
- *  - spawns and manages the `dsh_atom_memory.rpc` Python child process,
+ *  - spawns and manages the `atom_memory.rpc` Python child process,
  *  - exposes `memory_*` tools (add/recall/forget/memory_md/user_md/stats),
  *  - wires an LLM-first extractor that uses the dsh default model and ships
  *    typed candidates to Python for persistence (rules remain the fallback),
@@ -23,7 +23,7 @@ import { registerMemoryContext } from './context.ts'
 import { registerCapture } from './capture.ts'
 import { buildLlmExtractor, type ExtractFn } from './llm-extractor.ts'
 
-export const name = 'dsh-atom-memory-dsh'
+export const name = 'dsh-atom-memory'
 /**
  * Required services. `tools` and `systemPrompt` are the only hard
  * dependencies — matching the reference dsh-memory plugin. `llm` and
@@ -144,3 +144,5 @@ export function apply(ctx: Context, config: ConfigShape): void {
 
   ctx.logger('[dsh-atom-memory] loaded')
 }
+
+

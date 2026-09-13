@@ -42,7 +42,7 @@ def _read_migration(name: str) -> str:
     Returns:
         The raw SQL text of the migration.
     """
-    text = importlib.resources.files("dsh_atom_memory.migrations").joinpath(name).read_text(
+    text = importlib.resources.files("atom_memory.migrations").joinpath(name).read_text(
         encoding="utf-8"
     )
     return text
@@ -125,3 +125,4 @@ def connect_for_tests(config: Optional[MemConfig] = None) -> sqlite3.Connection:
     cfg = config or MemConfig(db_path=":memory:")
     cfg.db_path = ":memory:"
     return open_db(cfg)
+

@@ -12,7 +12,7 @@
   `stdin`/`stdout`/`stderr` 及 `spawn` `error` 事件挂监听（含 EPIPE），子进程
   异常死亡改走共享 `handleExit` → `rejectAll` 收尾，不再因未捕获的 stream
   `error` 事件使宿主进程致命崩溃。
-- **仓库根节点 bundle 壳**：根 `package.json`（`name: dsh-atom-memory-dsh`、
+- **仓库根节点 bundle 壳**：根 `package.json`（`name: dsh-atom-memory`、
   `dsh.bundle.patch → ./dsh/cordis.patch.yml`）让 `dsh plugin add <git-url>`
   把整个仓库安装为 profile layer；`dsh/lib` 产物入库（对齐 dsh-memory），
   git clone 无需现场 build。
@@ -43,3 +43,4 @@
 - LLM-first 抽取在 dsh 进程内执行（那里有 `ctx.llm`），类型化候选经
   `persist_candidates` → `persist_pre` 交给 Python 持久化；规则抽取始终是
   Python 侧的回退。语义符合「LLM 默认用 dsh 配置的第一个模型」。
+

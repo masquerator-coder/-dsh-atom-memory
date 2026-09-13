@@ -1,5 +1,5 @@
 /**
- * Python bridge — manages the long-lived `dsh_atom_memory.rpc` child process
+ * Python bridge — manages the long-lived `atom_memory.rpc` child process
  * and speaks the NDJSON stdio protocol with it.
  *
  * The bridge owns zero model-visible state: it is a pure request/response
@@ -51,7 +51,7 @@ interface Pending {
 }
 
 /**
- * Spawn `python -m dsh_atom_memory.rpc` for the plugin.
+ * Spawn `python -m atom_memory.rpc` for the plugin.
  *
  * @param pythonBin - interpreter to use (defaults to `python`).
  */
@@ -60,7 +60,7 @@ export function defaultSpawn(
   cwd?: string,
 ): ProcessLike {
   const bin = pythonBin && pythonBin.length > 0 ? pythonBin : 'python'
-  const child = spawn(bin, ['-m', 'dsh_atom_memory.rpc'], {
+  const child = spawn(bin, ['-m', 'atom_memory.rpc'], {
     stdio: ['pipe', 'pipe', 'pipe'],
     cwd,
     env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
@@ -267,3 +267,4 @@ export class PythonBridge {
     this.rejectAll(new Error(`python bridge exited (code=${code}, signal=${signal})`))
   }
 }
+

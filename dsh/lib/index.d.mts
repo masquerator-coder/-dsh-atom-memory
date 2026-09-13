@@ -4,7 +4,7 @@ import { Context } from "@deepseek-ai/cordis";
 interface Config {
   /** Python-side SQLite database path (expanded by the library). */
   dbPath?: string;
-  /** Override the interpreter used to spawn `python -m dsh_atom_memory.rpc`. */
+  /** Override the interpreter used to spawn `python -m atom_memory.rpc`. */
   pythonBin?: string;
   /** Auto-start the bridge on plugin load (deployment-time switch). */
   autostart?: boolean;
@@ -28,7 +28,7 @@ interface Config {
 declare const Config: z<Config>;
 //#endregion
 //#region src/index.d.ts
-declare const name = "dsh-atom-memory-dsh";
+declare const name = "dsh-atom-memory";
 /**
  * Required services. `tools` and `systemPrompt` are the only hard
  * dependencies — matching the reference dsh-memory plugin. `llm` and

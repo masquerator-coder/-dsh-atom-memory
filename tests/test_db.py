@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dsh_atom_memory.config import MemConfig
-from dsh_atom_memory.db import SCHEMA_VERSION, connect_for_tests, open_db
-from dsh_atom_memory.embedder import serialize_float32
+from atom_memory.config import MemConfig
+from atom_memory.db import SCHEMA_VERSION, connect_for_tests, open_db
+from atom_memory.embedder import serialize_float32
 
 
 def test_open_db_creates_all_tables(tmp_path):
@@ -293,3 +293,4 @@ def test_v2_database_upgrades_to_v3_with_null_content(tmp_path):
         ).fetchone()["content"] == '{"steps":["a","b"]}'
     finally:
         conn.close()
+

@@ -27,7 +27,7 @@ const Config = z.object({
 //#endregion
 //#region src/bridge.ts
 /**
-* Python bridge — manages the long-lived `dsh_atom_memory.rpc` child process
+* Python bridge — manages the long-lived `atom_memory.rpc` child process
 * and speaks the NDJSON stdio protocol with it.
 *
 * The bridge owns zero model-visible state: it is a pure request/response
@@ -47,13 +47,13 @@ const Config = z.object({
 * @module dsh-atom-memory/bridge
 */
 /**
-* Spawn `python -m dsh_atom_memory.rpc` for the plugin.
+* Spawn `python -m atom_memory.rpc` for the plugin.
 *
 * @param pythonBin - interpreter to use (defaults to `python`).
 */
 function defaultSpawn(pythonBin, cwd) {
 	const bin = pythonBin && pythonBin.length > 0 ? pythonBin : "python";
-	return spawn(bin, ["-m", "dsh_atom_memory.rpc"], {
+	return spawn(bin, ["-m", "atom_memory.rpc"], {
 		stdio: [
 			"pipe",
 			"pipe",
@@ -619,7 +619,7 @@ function buildLlmExtractor(ctx, opts = {}) {
 			}],
 			source: {
 				kind: "plugin",
-				plugin: "dsh-atom-memory-dsh"
+				plugin: "dsh-atom-memory"
 			}
 		})];
 		const options = {
@@ -672,7 +672,7 @@ function parseCandidates(raw) {
 }
 //#endregion
 //#region src/index.ts
-const name = "dsh-atom-memory-dsh";
+const name = "dsh-atom-memory";
 /**
 * Required services. `tools` and `systemPrompt` are the only hard
 * dependencies — matching the reference dsh-memory plugin. `llm` and

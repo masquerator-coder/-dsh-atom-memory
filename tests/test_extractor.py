@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from dsh_atom_memory.extractor import Extractor, extract_rules
+from atom_memory.extractor import Extractor, extract_rules
 
 
 def _first(text):
@@ -155,7 +155,7 @@ def test_extractor_llm_first_wins_over_rules():
 
 def test_extractor_llm_normalizes_single_dict_and_candidate():
     """LLM output may be a single dict or a FactCandidate."""
-    from dsh_atom_memory.models import FactCandidate
+    from atom_memory.models import FactCandidate
 
     ex = Extractor(llm_extractor=lambda *a, **k: {"subject": "用户", "predicate": "职业", "object": "工程师"})
     out = ex.extract("随便说点什么", "u1", "s1")
@@ -356,3 +356,4 @@ def test_llm_candidate_passthrough_keeps_type_and_content():
     assert out[0].object == "先备份再升级"
     # dict candidate inherits scope
     assert out[0].user_id == "u1" and out[0].session_id == "s1"
+

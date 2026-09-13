@@ -1,5 +1,5 @@
 {
-  "name": "dsh-atom-memory-dsh",
+  "name": "dsh-atom-memory",
   "version": "0.1.0",
   "description": "dsh-side integration for the dsh-atom-memory Python library: subprocess+stdio bridge, memory tools, LLM-first extraction, and durable capture hooks. Root bundle shell so the whole repo installs as one dsh profile layer via `dsh plugin --profile <name> add <git-url>`.",
   "type": "module",
@@ -50,3 +50,4 @@
   },
   "license": "Apache-2.0"
 }
+

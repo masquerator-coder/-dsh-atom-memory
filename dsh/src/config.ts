@@ -10,7 +10,7 @@ import z from '@deepseek-ai/schemastery'
 export interface Config {
   /** Python-side SQLite database path (expanded by the library). */
   dbPath?: string
-  /** Override the interpreter used to spawn `python -m dsh_atom_memory.rpc`. */
+  /** Override the interpreter used to spawn `python -m atom_memory.rpc`. */
   pythonBin?: string
   /** Auto-start the bridge on plugin load (deployment-time switch). */
   autostart?: boolean
@@ -45,3 +45,4 @@ export const Config: z<Config> = z.object({
   memoryMdTokens: z.number().default(1500),
   rpcTimeoutMs: z.number().default(30_000),
 })
+

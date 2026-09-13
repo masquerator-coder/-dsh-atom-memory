@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import asyncio
 
-from dsh_atom_memory.config import MemConfig
-from dsh_atom_memory.db import connect_for_tests
-from dsh_atom_memory.embedder import serialize_float32
-from dsh_atom_memory.retriever import (
+from atom_memory.config import MemConfig
+from atom_memory.db import connect_for_tests
+from atom_memory.embedder import serialize_float32
+from atom_memory.retriever import (
     Retriever,
     SOURCE_CREDIBILITY,
     estimate_tokens,
@@ -218,7 +218,7 @@ def test_rerank_ties_break_by_confidence():
 # ---- memory_md / profile rendering (derived views) ---------------------------
 
 def test_memory_md_contains_fact_id():
-    from dsh_atom_memory.memory_md import generate_memory_md
+    from atom_memory.memory_md import generate_memory_md
 
     conn = connect_for_tests()
     try:
@@ -235,7 +235,7 @@ def test_memory_md_contains_fact_id():
 
 
 def test_upsert_profile_source_priority():
-    from dsh_atom_memory.profile import profile_md, upsert_profile
+    from atom_memory.profile import profile_md, upsert_profile
 
     conn = connect_for_tests()
     try:
@@ -270,7 +270,7 @@ def test_upsert_profile_source_priority():
 
 
 def test_derive_profile_from_facts_single_and_multi():
-    from dsh_atom_memory.profile import derive_profile_from_facts
+    from atom_memory.profile import derive_profile_from_facts
 
     conn = connect_for_tests()
     try:
@@ -290,3 +290,4 @@ def test_derive_profile_from_facts_single_and_multi():
         assert prof["value"] == "工程师"
     finally:
         conn.close()
+

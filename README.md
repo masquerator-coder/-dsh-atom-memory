@@ -59,7 +59,7 @@ Requirements: Python 3.11+. Dependencies are pulled automatically —
 
 ```python
 import asyncio
-from dsh_atom_memory import AtomMem, MemConfig
+from atom_memory import AtomMem, MemConfig
 
 async def main():
     mem = AtomMem(MemConfig(db_path="./memory.db"))
@@ -140,7 +140,7 @@ from typing import Callable, Optional
 
 @dataclass
 class MemConfig:
-    db_path: str = "~/.dsh_atom_memory/memory.db"
+    db_path: str = "~/.atom_memory/memory.db"
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_dim: int = 512
     default_token_budget: int = 2000
@@ -232,9 +232,9 @@ The `dsh/` npm subpackage wires this library into DeepSeek Harness as an
 
 ```
 dsh plugin (dsh/src/*.ts)
-   │  child_process.spawn('python', ['-m','dsh_atom_memory.rpc'])
+   │  child_process.spawn('python', ['-m','atom_memory.rpc'])
    ▼
-Python dsh_atom_memory/rpc.py   (NDJSON over stdin/stdout/stderr)
+Python atom_memory/rpc.py   (NDJSON over stdin/stdout/stderr)
    ▼
 AtomMem  (in-process memory: worker, retriever, summaries …)
 ```
@@ -260,9 +260,9 @@ end, and the `dsh/` package's own vitest + build gate for the host side.
 ### Install as a dsh profile layer (git distribution)
 
 This repository is a dual-purpose package: the Python library at the root
-(`dsh_atom_memory/`), and the dsh Cordis plugin built from `dsh/src`. The
+(`atom_memory/`), and the dsh Cordis plugin built from `dsh/src`. The
 **root `package.json` is the dsh bundle shell** — its `name`
-(`dsh-atom-memory-dsh`) matches the `cordis.patch.yml` plugin entry and its
+(`dsh-atom-memory`) matches the `cordis.patch.yml` plugin entry and its
 `dsh.bundle.patch` points at `./dsh/cordis.patch.yml`, so the whole repo
 installs as one dsh profile layer directly from a git URL (no separate npm
 package to publish):
@@ -299,9 +299,10 @@ upgrades), rule extraction (semantic / procedural / episodic + the
 (three-type summary bucketing + light-vs-long knowledge inclusion), and the
 end-to-end pipeline (add/recall/replace/forget/memory_md/summarize/idempotency,
 plus knowledge facts persisting `type` / `content` through recall and
-`memory.md`). Set `DSH_ATOM_MEMORY_REAL_EMBED=1` to enable the live-model
+`memory.md`). Set `ATOM_MEMORY_REAL_EMBED=1` to enable the live-model
 embedding test (needs one-time download).
 
 ## License
 
 MIT
+

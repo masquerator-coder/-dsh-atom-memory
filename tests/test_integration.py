@@ -17,9 +17,9 @@ import asyncio
 
 import pytest
 
-from dsh_atom_memory import AtomMem, MemConfig
-from dsh_atom_memory.embedder import serialize_float32
-from dsh_atom_memory.summarizer import SCOPE_GLOBAL, mark_stale, try_rebuild
+from atom_memory import AtomMem, MemConfig
+from atom_memory.embedder import serialize_float32
+from atom_memory.summarizer import SCOPE_GLOBAL, mark_stale, try_rebuild
 
 
 class _FakeEmbedder:
@@ -42,7 +42,7 @@ def _make(tmp_path, monkeypatch, **overrides) -> AtomMem:
     )
     defaults.update(overrides)
     # Swap the real embedder for a deterministic fake.
-    monkeypatch.setattr("dsh_atom_memory.api.Embedder", _FakeEmbedder)
+    monkeypatch.setattr("atom_memory.api.Embedder", _FakeEmbedder)
     return AtomMem(MemConfig(**defaults))
 
 
@@ -276,7 +276,7 @@ def test_summary_is_rebuilt_after_mutation(tmp_path, monkeypatch):
 
 def test_summarizer_stale_then_debounced_rebuild(tmp_path, monkeypatch):
     """Direct summarizer semantics: stale rows rebuild only after debounce."""
-    from dsh_atom_memory.db import open_db
+    from atom_memory.db import open_db
 
     conn = open_db(MemConfig(db_path=str(tmp_path / "sum.db")))
 
@@ -431,3 +431,4 @@ def test_llm_failure_falls_back_to_rules_through_worker(tmp_path, monkeypatch):
     # LLM failed -> rule fallback persists the 偏好 fact, nothing is dropped.
     assert len(rows) == 1
     assert (rows[0]["predicate"], rows[0]["object"]) == ("偏好", "黑咖啡")
+

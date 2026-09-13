@@ -6,11 +6,11 @@
 # omit it, are for replacing an existing loader id.
 #
 # `dbPath` is where the Python SQLite database lives. `pythonBin` overrides the
-# interpreter used to spawn `python -m dsh_atom_memory.rpc` (leave unset to use
+# interpreter used to spawn `python -m atom_memory.rpc` (leave unset to use
 # `python` on PATH). The plugin stays inert until loaded.
 - insert:
     - id: atom-memory
-      name: dsh-atom-memory-dsh
+      name: dsh-atom-memory
       config:
         dbPath: "~/.dsh/atom-memory/memory.db"
         pythonBin: ""
@@ -20,3 +20,5 @@
         nudgeIntervalMinutes: 30
         preCompressionCapture: true
         autostart: true
+
+

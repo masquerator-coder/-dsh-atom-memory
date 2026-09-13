@@ -1,4 +1,4 @@
-"""Configuration dataclass for :mod:`dsh_atom_memory`.
+"""Configuration dataclass for :mod:`atom_memory`.
 
 The ``MemConfig`` dataclass centralises every tunable that the library needs,
 from the SQLite file location to the embedding model name and the optional
@@ -14,7 +14,7 @@ from typing import Callable, Optional
 
 @dataclass
 class MemConfig:
-    """Runtime configuration for an :class:`~dsh_atom_memory.api.AtomMem` instance.
+    """Runtime configuration for an :class:`~atom_memory.api.AtomMem` instance.
 
     Attributes:
         db_path: Filesystem location of the SQLite database file. A leading
@@ -49,7 +49,7 @@ class MemConfig:
             declare one.
     """
 
-    db_path: str = "~/.dsh_atom_memory/memory.db"
+    db_path: str = "~/.atom_memory/memory.db"
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_dim: int = 512
     default_token_budget: int = 2000
@@ -70,3 +70,4 @@ class MemConfig:
             and friends.
         """
         return str(Path(self.db_path).expanduser())
+

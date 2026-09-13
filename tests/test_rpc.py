@@ -1,6 +1,6 @@
 """Tests for the NDJSON stdio RPC service (rpc.py).
 
-These drive a real ``python -m dsh_atom_memory.rpc`` child process the way the
+These drive a real ``python -m atom_memory.rpc`` child process the way the
 dsh plugin does, so they assert the wire protocol end to end without any Node
 dependency. matplotlib-free; uses only stdlib subprocess.
 """
@@ -19,7 +19,7 @@ import pytest
 # library path would. We exercise non-embedding methods and the lifecycle here,
 # plus add() which enqueues without embedding (the worker would embed, so we
 # only assert the enqueue response, not persistence).
-ADDR = [sys.executable, "-m", "dsh_atom_memory.rpc"]
+ADDR = [sys.executable, "-m", "atom_memory.rpc"]
 
 
 @pytest.fixture
@@ -183,3 +183,4 @@ def test_persist_candidates_persists_type_and_content(proc, tmp_path):
     lessons = [f for f in resp["result"]["facts"] if f.get("type") == "lesson"]
     assert len(lessons) == 1
     assert lessons[0]["content"] == "升级任何生产依赖前先做完整备份"
+

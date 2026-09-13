@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from dsh_atom_memory.db import connect_for_tests
-from dsh_atom_memory.summarizer import (
+from atom_memory.db import connect_for_tests
+from atom_memory.summarizer import (
     rebuild_summary,
     try_rebuild,
     SCOPE_GLOBAL,
@@ -203,3 +203,4 @@ def test_light_and_long_knowledge_coexist_with_semantic():
         assert "发布SOP" not in text
     finally:
         conn.close()
+

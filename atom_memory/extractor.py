@@ -1,7 +1,7 @@
 """Rule-based atomic fact extraction.
 
 The extractor turns user utterances into structured
-:class:`~dsh_atom_memory.models.FactCandidate` objects by matching a small
+:class:`~atom_memory.models.FactCandidate` objects by matching a small
 set of hand-written Chinese pattern rules. An optional LLM extractor
 (``MemConfig.llm_extractor``) can be layered on top to surface additional
 candidates that the rules miss.
@@ -511,3 +511,4 @@ def _candidate_from_dict(d: dict, user_id: str = "", session_id: str = "", turn_
         type=d.get("type", TYPE_SEMANTIC),
         content=d.get("content"),
     )
+

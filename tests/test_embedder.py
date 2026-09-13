@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from dsh_atom_memory.embedder import (
+from atom_memory.embedder import (
     Embedder,
     deserialize_float32,
     serialize_float32,
@@ -82,8 +82,8 @@ def test_serialize_float32_matches_struct_layout():
 
 
 @pytest.mark.skipif(
-    not os.environ.get("DSH_ATOM_MEMORY_REAL_EMBED"),
-    reason="Requires DSH_ATOM_MEMORY_REAL_EMBED=1 (downloads the FastEmbed model over the network).",
+    not os.environ.get("atom_memory_REAL_EMBED"),
+    reason="Requires atom_memory_REAL_EMBED=1 (downloads the FastEmbed model over the network).",
 )
 def test_real_model_512_dim_on_explicit_request():
     """Real-model smoke test, only when the operator opts in explicitly."""
@@ -93,3 +93,4 @@ def test_real_model_512_dim_on_explicit_request():
     floats = deserialize_float32(blob)
     assert len(floats) == 512
     assert any(v != 0.0 for v in floats)  # not a zero-vector
+

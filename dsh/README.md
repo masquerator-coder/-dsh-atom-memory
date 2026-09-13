@@ -1,11 +1,11 @@
-# dsh-atom-memory-dsh
+# dsh-atom-memory
 
 dsh 侧接入插件：把纯 Python 记忆库（`dsh-atom-memory`）作为**独立子进程**接入
 DeepSeek Harness，通过 NDJSON stdio 桥接，暴露 `memory_*` 工具、LLM-first
 抽取、以及 durable 会话捕获钩子。**不改动 dsh 源码，不 import Python 库** ——
 所有记忆逻辑都运行在被隔离的 Python 子进程里。
 
-- **桥接**：`child_process.spawn('python', ['-m', 'dsh_atom_memory.rpc'])` +
+- **桥接**：`child_process.spawn('python', ['-m', 'atom_memory.rpc'])` +
   stdin/stdout NDJSON 请求/响应 + stderr 带 tag 的后台事件。
 - **LLM-first**：默认用 dsh 当前预设的第一个模型（`agentDefaultModel`
   `currentSelection()`）调用 `ctx.llm` 抽取，类型化候选交给 Python 持久化；
@@ -81,3 +81,5 @@ pnpm run build       # tsdown -> lib/
 ```
 
 端到端验证（真实 Python 子进程）：见根 README 的 <a href="#integration">桥接集成</a>。
+
+

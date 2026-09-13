@@ -1,6 +1,6 @@
 """dsh-atom-memory: lightweight in-process long-term memory for DeepSeek Harness.
 
-The public entry point is :class:`~dsh_atom_memory.api.AtomMem`, which wraps
+The public entry point is :class:`~atom_memory.api.AtomMem`, which wraps
 the full pipeline: write (add/extract/validate), recall (FTS + vector), soft
 replace/forget and derived views (memory.md, user profile, summaries).
 """
@@ -50,3 +50,4 @@ __all__ = [
 ]
 
 __version__ = "0.1.0"
+
