@@ -52,11 +52,59 @@ Return ONLY a JSON array. Each element is an object with keys:
 - "object" (the value), and optionally "type" and "content".
 "type" is one of: semantic, procedural, episodic, sop, decision_rule, few_shot, lesson.
 For knowledge facts, put the full body in "content" and a short title in "object".
-If nothing worth remembering, return an empty array [].
 
-Rules: never fabricate facts not stated; break multi-fact utterances into
+CRITICAL - only extract facts that are worth remembering long-term:
+- Save durable, reusable knowledge: decisions, workflows, procedures, lessons,
+  preferences, stable attributes, and anything that remains valuable in future
+  sessions.
+- Do NOT save transient, process-only details that only matter in this single
+  turn: questions asked, complaints made, meta-commentary about the current
+  conversation, the fact that a task was requested, how a system was debugged,
+  or the wording of instructions the user gave. These are not stable facts.
+- If the utterance contains no long-lived, reusable fact, return an empty
+  array [].
+
+Other rules: never fabricate facts not stated; break multi-fact utterances into
 multiple objects; keep preferences/attributes as (用户, 偏好, X). Do NOT include
 instructions or commentary — JSON only.`
+
+/**
+ * Predicates that describe transient conversation actions rather than stable
+ * facts (asking, complaining, proposing, observing, deciding "about a turn").
+ * Candidates whose predicate or whose subject+predicate marks process talk are
+ * dropped as a belt-and-braces guard on top of the extraction prompt.
+ */
+const EPHEMERAL_PREDICATES = new Set([
+  '询问', '问', '质疑', '提出', '观察到', '观察', '怀疑', '不满', '抱怨',
+  '请求', '要求', '刚刚进行', '进行会话', '遇到问题', '尝试', '测试',
+  '描述', '声明', '汇报', '评论', '解释',
+])
+
+/** Whether a phrase looks like a question that only matters in this turn. */
+function isTransient(value: string): boolean {
+  const v = (value || '').trim()
+  if (!v) return false
+  if (v.endsWith('？') || v.endsWith('?')) return true
+  return /^(为什么|怎么|是否|能不能|可否|如何|what|how|why|when)\b/i.test(v)
+}
+
+/** Drop candidates that carry transient process-only content. */
+function isEphemeral(c: Partial<ExtractedCandidate>): boolean {
+  const pred = (c.predicate || '').trim()
+  if (EPHEMERAL_PREDICATES.has(pred)) return true
+  // A question-shaped predicate or object is transient by nature.
+  if (isTransient(pred)) return true
+  if (isTransient(c.object || '')) return true
+  // Pure meta about "this conversation / this plugin / this debug session".
+  const blob = `${c.subject || ''} ${pred} ${c.object || ''} ${c.content || ''}`.toLowerCase()
+  if (/\b(会话|对话|调试|system prompt|提示词|memory\.md)\b/.test(blob)) {
+    // ...but only if the whole claim is really only about the conversation
+    // meta, not a genuine preference expressed through it.
+    const obvious = /\b(询问|质疑|观察到|抱怨|为什么|如何|怎么)\b/.test(blob)
+    if (obvious) return true
+  }
+  return false
+}
 
 /**
  * Build the LLM-first extraction function bound to the dsh `llm` service and
@@ -139,6 +187,9 @@ export function parseCandidates(raw: string): ExtractedCandidate[] {
     if (typeof c.subject !== 'string' || typeof c.predicate !== 'string' || typeof c.object !== 'string') {
       continue
     }
+    // Belt-and-braces: drop transient process-only candidates the prompt
+    // may have let through (asking/complaining/proposing this-turn talk).
+    if (isEphemeral(c)) continue
     out.push({
       subject: c.subject,
       predicate: c.predicate,
