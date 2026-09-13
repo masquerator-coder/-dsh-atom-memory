@@ -380,7 +380,6 @@ class AtomMem:
             lines.append(
                 f"> 覆盖 {len(fact_ids)} 条活跃事实 · fact_id: {', '.join(fact_ids) or '（无）'}"
             )
-        lines.append("> 生成于 dsh-atom-memory · 由活跃事实聚合而成")
         return "\n".join(lines)
 
     def _excluded_knowledge_ids(self, user_id: str, fact_ids: list) -> list:
