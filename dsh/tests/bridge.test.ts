@@ -7,12 +7,13 @@ class FakeProc {
   out = new Readable({ read() {} })
   err = new Readable({ read() {} })
   write = vi.fn((_chunk: string) => true)
+  stdinOn = vi.fn()
   kill = vi.fn(() => true)
   on = vi.fn()
   pid = 1
   asProcess(): ProcessLike {
     return {
-      stdin: { write: this.write },
+      stdin: { write: this.write, on: this.stdinOn },
       stdout: this.out,
       stderr: this.err,
       kill: this.kill,

@@ -29,8 +29,13 @@ declare const Config: z<Config>;
 //#endregion
 //#region src/index.d.ts
 declare const name = "dsh-atom-memory-dsh";
-/** Required services — tools is the only hard dependency; llm etc. are read via ctx.get. */
-declare const inject: readonly ["tools"];
+/**
+ * Required services. `tools` and `systemPrompt` are the only hard
+ * dependencies — matching the reference dsh-memory plugin. `llm` and
+ * `agentDefaultModel` are read via `ctx.get`, never injected (they are
+ * optional, model-versioned services).
+ */
+declare const inject: readonly ["tools", "systemPrompt"];
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
 export { Config, apply, inject, name };

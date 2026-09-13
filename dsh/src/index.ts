@@ -24,8 +24,13 @@ import { registerCapture } from './capture.ts'
 import { buildLlmExtractor, type ExtractFn } from './llm-extractor.ts'
 
 export const name = 'dsh-atom-memory-dsh'
-/** Required services — tools is the only hard dependency; llm etc. are read via ctx.get. */
-export const inject = ['tools'] as const
+/**
+ * Required services. `tools` and `systemPrompt` are the only hard
+ * dependencies — matching the reference dsh-memory plugin. `llm` and
+ * `agentDefaultModel` are read via `ctx.get`, never injected (they are
+ * optional, model-versioned services).
+ */
+export const inject = ['tools', 'systemPrompt'] as const
 
 export { Config }
 

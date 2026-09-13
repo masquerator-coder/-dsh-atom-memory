@@ -24,10 +24,11 @@ import { randomUUID } from 'node:crypto'
 
 /** Shape of the process we drive — injectable so tests can fake it. */
 export interface ProcessLike {
-  stdin: { write(chunk: string): boolean }
+  stdin: { write(chunk: string): boolean; on(event: 'error', listener: () => void): unknown }
   stdout: NodeJS.ReadableStream
   stderr: NodeJS.ReadableStream
   kill(signal?: NodeJS.Signals): boolean
+  on(event: 'error', listener: (err: Error) => void): unknown
   on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
   pid?: number
 }
@@ -124,6 +125,12 @@ export class PythonBridge {
     if (this.disposed) throw new Error('bridge is disposed')
     if (this.proc !== undefined) return // already running / starting
     this.proc = this.spawnProcess()
+    // A failed spawn (ENOENT) or a child that dies before a request is
+    // served surfaces as an 'error' or 'exit' on the child. Node treats an
+    // 'error' with no listener on a child stdout/stdin as fatal, so the child
+    // is wired for errors before anything can write to it. Every error here is
+    // channeled through the shared exit path (rejectAll), never thrown.
+    this.proc.on('error', () => this.handleExit(null, null))
     this.wireStreams()
     this.proc.on('exit', (code, signal) => this.handleExit(code, signal))
     try {
@@ -175,6 +182,15 @@ export class PythonBridge {
 
   private wireStreams(): void {
     const proc = this.proc!
+    // Node kills the process on an unhandled 'error' on any child stream.
+    // Writes to a dead child's stdin surface as EPIPE; the child's stdout can
+    // error too. All of these are expected outcomes of a process that exited
+    // and are routed to the shared exit path (handleExit -> rejectAll), never
+    // thrown into the host process.
+    const quiet = (): void => { /* child stream error; exit path owns teardown */ }
+    proc.stdin.on('error', quiet)
+    proc.stdout.on('error', quiet)
+    proc.stderr.on('error', quiet)
     this.incoming = createInterface({ input: proc.stdout, crlfDelay: Infinity })
     this.outgoing = proc.stdin
     this.incoming.on('line', (line) => {

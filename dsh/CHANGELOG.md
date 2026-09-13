@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.1] — 修复 git 分发装配
+
+### Fixed
+- **`inject` 增加 `systemPrompt`**：`context.ts` 里 `ctx.systemPrompt.section(...)`
+  此前未声名为依赖，装配时报
+  `cannot get property "systemPrompt" without inject`，导致插件挂载失败、进而
+  拖垮 `dsh web` 启动（EPIPE 崩溃）。现与参考 dsh-memory 一致：
+  `inject = ['tools', 'systemPrompt'] as const`。
+- **bridge 子进程流 error 处理**：`bridge.ts` 现在对 child
+  `stdin`/`stdout`/`stderr` 及 `spawn` `error` 事件挂监听（含 EPIPE），子进程
+  异常死亡改走共享 `handleExit` → `rejectAll` 收尾，不再因未捕获的 stream
+  `error` 事件使宿主进程致命崩溃。
+- **仓库根节点 bundle 壳**：根 `package.json`（`name: dsh-atom-memory-dsh`、
+  `dsh.bundle.patch → ./dsh/cordis.patch.yml`）让 `dsh plugin add <git-url>`
+  把整个仓库安装为 profile layer；`dsh/lib` 产物入库（对齐 dsh-memory），
+  git clone 无需现场 build。
+
 ## [0.1.0] — dsh 接入（未 release）
 
 ### Added

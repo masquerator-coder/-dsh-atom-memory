@@ -129,6 +129,7 @@ var PythonBridge = class {
 		if (this.disposed) throw new Error("bridge is disposed");
 		if (this.proc !== void 0) return;
 		this.proc = this.spawnProcess();
+		this.proc.on("error", () => this.handleExit(null, null));
 		this.wireStreams();
 		this.proc.on("exit", (code, signal) => this.handleExit(code, signal));
 		try {
@@ -172,6 +173,10 @@ var PythonBridge = class {
 	}
 	wireStreams() {
 		const proc = this.proc;
+		const quiet = () => {};
+		proc.stdin.on("error", quiet);
+		proc.stdout.on("error", quiet);
+		proc.stderr.on("error", quiet);
 		this.incoming = createInterface({
 			input: proc.stdout,
 			crlfDelay: Infinity
@@ -668,8 +673,13 @@ function parseCandidates(raw) {
 //#endregion
 //#region src/index.ts
 const name = "dsh-atom-memory-dsh";
-/** Required services — tools is the only hard dependency; llm etc. are read via ctx.get. */
-const inject = ["tools"];
+/**
+* Required services. `tools` and `systemPrompt` are the only hard
+* dependencies — matching the reference dsh-memory plugin. `llm` and
+* `agentDefaultModel` are read via `ctx.get`, never injected (they are
+* optional, model-versioned services).
+*/
+const inject = ["tools", "systemPrompt"];
 /** Fallback user/session scope for a single-user local harness. */
 const FALLBACK_SCOPE = "global";
 /** Start params sent to the Python bridge (worker/embedding config). */
