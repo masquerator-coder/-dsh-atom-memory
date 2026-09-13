@@ -142,7 +142,7 @@ export function buildLlmExtractor(
       model: selection!.model,
       messages: messages as never[],
       system: EXTRACTION_SYSTEM,
-      maxTokens: opts.maxTokens ?? 600,
+      maxTokens: opts.maxTokens ?? 2048,
       purpose: 'session-title',
     }
     const assembler = new BlockAssembler()
@@ -151,7 +151,14 @@ export function buildLlmExtractor(
     }
     const finished = assembler.finish
     if (finished.kind !== 'stop') {
-      return [] // let rules handle it rather than persisting partial output
+      // Truncated (or otherwise unfinished) output: partial JSON is unusable,
+      // so it is discarded and the caller falls back. Log it, because a budget
+      // that is too small otherwise loses long knowledge invisibly.
+      ctx.logger(
+        `[atom-memory] extraction not persisted (finish=${finished.kind}); `
+        + `consider raising extractionMaxTokens (now ${opts.maxTokens ?? 2048})`,
+      )
+      return []
     }
     const raw = assembler.blocks()
       .filter(b => b.type === 'text')

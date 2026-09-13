@@ -87,9 +87,14 @@ export function apply(ctx: Context, config: ConfigShape): void {
   }
   if (config.autostart !== false) tryStart()
 
-  // LLM-first extraction (optional): reads the dsh default model.
+  // LLM-first extraction (optional): reads the dsh default model. The output
+  // budget must fit the whole JSON payload including knowledge bodies; the old
+  // hard-coded 600 truncated long knowledge, and a truncated extraction is
+  // discarded rather than persisted.
   const extract: ExtractFn | undefined =
-    config.llmExtractionEnabled === false ? undefined : buildLlmExtractor(ctx, { maxTokens: 600 })
+    config.llmExtractionEnabled === false
+      ? undefined
+      : buildLlmExtractor(ctx, { maxTokens: config.extractionMaxTokens ?? 2048 })
 
   // Single ingestion point: LLM-first candidates -> persist_candidates, else
   // -> rule-based add (everything stays isolated in the Python process).

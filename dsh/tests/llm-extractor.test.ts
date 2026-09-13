@@ -70,4 +70,43 @@ describe('buildLlmExtractor', () => {
     } as any
     expect(buildLlmExtractor(ctx)).toBeUndefined()
   })
+
+  it('passes the configured output budget to the extraction call', async () => {
+    const captured: Array<{ maxTokens?: number }> = []
+    const ctx = {
+      get: (key: string) => key === 'llm'
+        ? {
+            stream: async function* (opts: { maxTokens?: number }) {
+              captured.push(opts)
+              throw new Error('stop-here') // abort after capturing the options
+            },
+          }
+        : { currentSelection: () => ({ provider: 'p', model: 'm' }) },
+      logger: () => {},
+    } as any
+
+    const extract = buildLlmExtractor(ctx, { maxTokens: 4096 })!
+    await expect(extract('x')).rejects.toThrow('stop-here')
+    expect(captured[0]!.maxTokens).toBe(4096)
+  })
+
+  it('defaults the extraction output budget to 2048 tokens', async () => {
+    const captured: Array<{ maxTokens?: number }> = []
+    const ctx = {
+      get: (key: string) => key === 'llm'
+        ? {
+            stream: async function* (opts: { maxTokens?: number }) {
+              captured.push(opts)
+              throw new Error('stop-here')
+            },
+          }
+        : { currentSelection: () => ({ provider: 'p', model: 'm' }) },
+      logger: () => {},
+    } as any
+
+    // A budget that fits a knowledge body: the old hard-coded 600 truncated
+    // long payloads, and a truncated extraction is discarded, not persisted.
+    await expect(buildLlmExtractor(ctx)!('x')).rejects.toThrow('stop-here')
+    expect(captured[0]!.maxTokens).toBe(2048)
+  })
 })

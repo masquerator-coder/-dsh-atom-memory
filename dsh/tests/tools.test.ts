@@ -205,3 +205,47 @@ describe('memory_add LLM-first extraction', () => {
     expect(method).toBe('add')
   })
 })
+
+describe('memory_add raw knowledge fallback', () => {
+  // Long enough to count as substantial content (>= RAW_KNOWLEDGE_MIN_CHARS).
+  const longBody = '运维手册\n' + '部署前先备份数据库，再执行迁移脚本。'.repeat(10)
+
+  it('stores substantial content verbatim when extraction yields nothing', async () => {
+    const { bridge, registered } = setup(vi.fn(async () => []))
+    bridge.call.mockResolvedValue({ candidate_id: 'cand-raw' })
+
+    const add = registered.find((d) => d.name === 'memory_add')!
+    const result = (await add.execute({ content: longBody }, execWithSession('session-III'))) as any
+
+    const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    // Must NOT fall through to the rules-only `add`, which drops free-form text.
+    expect(method).toBe('persist_candidates')
+    const candidate = (params.candidates as any[])[0]!
+    expect(candidate.type).toBe('sop')              // long-form bucket
+    expect(candidate.content).toBe(longBody.trim()) // full body preserved
+    expect(candidate.object).toBe('运维手册')        // title from the first line
+    expect(result.fallback).toBe('raw')
+  })
+
+  it('also rescues substantial content when the extraction call throws', async () => {
+    const { bridge, registered } = setup(vi.fn(async () => { throw new Error('truncated') }))
+    bridge.call.mockResolvedValue({ candidate_id: 'cand-raw2' })
+
+    const add = registered.find((d) => d.name === 'memory_add')!
+    await add.execute({ content: longBody }, execWithSession('session-JJJ'))
+
+    const [method] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    expect(method).toBe('persist_candidates')
+  })
+
+  it('leaves short utterances on the rule path', async () => {
+    const { bridge, registered } = setup(vi.fn(async () => []))
+    bridge.call.mockResolvedValue({ candidate_id: 'cand-short' })
+
+    const add = registered.find((d) => d.name === 'memory_add')!
+    await add.execute({ content: '用户喜欢黑咖啡' }, execWithSession('session-KKK'))
+
+    const [method] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    expect(method).toBe('add')
+  })
+})

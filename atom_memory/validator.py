@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Optional
 
-from .models import FactCandidate, ValidationResult
+from .models import ALL_KNOWLEDGE, FactCandidate, ValidationResult
 
 # Allowed confidence range (inclusive).
 _MIN_CONFIDENCE = 0.0
@@ -156,6 +156,9 @@ def _check_conflict(
     - different object:
         * multi-valued predicate (preferences, interests...) -> an independent
           claim, **not** a conflict;
+        * knowledge fact (sop / few_shot / decision_rule / lesson) -> independent
+          items that legitimately share one predicate (two SOPs, two lessons...),
+          **not** a conflict;
         * episodic event (type=episodic or predicate ``事件``) -> events are
           naturally many and independent, **not** a conflict;
         * single-valued predicate (attribute or one workflow name) -> the
@@ -168,9 +171,14 @@ def _check_conflict(
 
     cand_obj = (candidate.object or "").strip()
     cand_neg = _has_negation(candidate.qualifiers)
-    episodic = (
-        getattr(candidate, "type", "semantic") == "episodic"
-        or candidate.predicate == "事件"
+    cand_type = getattr(candidate, "type", "semantic") or "semantic"
+    episodic = cand_type == "episodic" or candidate.predicate == "事件"
+    # Knowledge items stay independent under a shared predicate: a second SOP or
+    # lesson is a new item, not a contradiction of the first.
+    multi_valued = (
+        candidate.predicate in MULTI_VALUED_PREDICATES
+        or episodic
+        or cand_type in ALL_KNOWLEDGE
     )
 
     rows = conn.execute(
@@ -200,15 +208,16 @@ def _check_conflict(
             )
 
         # Different object text.
-        if candidate.predicate not in MULTI_VALUED_PREDICATES and not episodic:
+        if not multi_valued:
             return ValidationResult.fail(
                 "conflict",
                 f"conflicts with active fact {row['fact_id']}",
                 candidate.candidate_id,
                 conflict_with=row["fact_id"],
             )
-        # Multi-valued predicate or episodic event with a different object:
-        # independent claim, keep scanning other matching facts.
+        # Multi-valued predicate, knowledge item or episodic event with a
+        # different object: independent claim, keep scanning other matching
+        # facts.
         continue
 
     return ValidationResult.pass_(candidate.candidate_id)

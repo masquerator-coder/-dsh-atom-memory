@@ -18,6 +18,15 @@ export interface Config {
   captureEnabled?: boolean
   /** Whether the LLM-first extractor is wired to the dsh default model. */
   llmExtractionEnabled?: boolean
+  /**
+   * Output-token cap for one LLM extraction call.
+   *
+   * The whole JSON payload (including any knowledge `content` body) must fit in
+   * this budget: exceeding it truncates the response, and a truncated
+   * extraction is discarded rather than persisted. Too small a value therefore
+   * silently loses long-form knowledge.
+   */
+  extractionMaxTokens?: number
   /** Whether the periodic nudge capture (write path) is enabled. */
   nudgeEnabled?: boolean
   /** Minutes between periodic nudge sweeps. */
@@ -40,6 +49,7 @@ export const Config: z<Config> = z.object({
   autostart: z.boolean().default(true),
   captureEnabled: z.boolean().default(true),
   llmExtractionEnabled: z.boolean().default(true),
+  extractionMaxTokens: z.number().default(2048),
   nudgeEnabled: z.boolean().default(true),
   nudgeIntervalMinutes: z.number().default(30),
   preCompressionCapture: z.boolean().default(true),

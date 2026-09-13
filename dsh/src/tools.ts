@@ -21,7 +21,48 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { PythonBridge } from './bridge.ts'
-import type { ExtractFn } from './llm-extractor.ts'
+import type { ExtractFn, ExtractedCandidate } from './llm-extractor.ts'
+
+/**
+ * Minimum trimmed length (characters) for the raw knowledge fallback. Below
+ * this a `memory_add` payload is treated as an ordinary short utterance and
+ * routed to the rule engine instead.
+ */
+const RAW_KNOWLEDGE_MIN_CHARS = 120
+
+/** Predicate stamped on raw-fallback knowledge facts. */
+const RAW_KNOWLEDGE_PREDICATE = '知识'
+
+/** Longest title kept from the first line of a raw-fallback body. */
+const RAW_KNOWLEDGE_TITLE_CHARS = 60
+
+/**
+ * Build a candidate that stores a payload verbatim as long-form knowledge.
+ *
+ * Used only when the caller explicitly asked to remember the content and
+ * extraction produced nothing usable. ``type`` is long-form knowledge so the
+ * body stays out of the summary digest (which advertises it by ``fact_id``
+ * instead of inlining it).
+ *
+ * @param text - The trimmed content to store.
+ * @returns A candidate carrying the full body in ``content``.
+ */
+export function rawKnowledgeCandidate(text: string): ExtractedCandidate {
+  const body = text.trim()
+  const firstLine =
+    body.split(/\r?\n/).map(l => l.trim()).find(l => l.length > 0) ?? body
+  const title =
+    firstLine.length <= RAW_KNOWLEDGE_TITLE_CHARS
+      ? firstLine
+      : `${firstLine.slice(0, RAW_KNOWLEDGE_TITLE_CHARS)}…`
+  return {
+    subject: '用户',
+    predicate: RAW_KNOWLEDGE_PREDICATE,
+    object: title,
+    type: 'sop',
+    content: body,
+  }
+}
 
 /**
  * Resolve the **user** scope for a tool call.
@@ -87,14 +128,15 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
     async execute(args, exec) {
       const uid = args.user ?? userIdOf(exec, scope)
       const sid = sessionIdOf(exec, scope)
-      // LLM-first, exactly like the capture path: extract typed candidates in
-      // the dsh process (where the model lives) and persist them. This matters
-      // because the Python-side ``add`` path only runs the rule engine, which
-      // silently drops free-form facts (status 'skipped') that its narrow
-      // patterns do not match — e.g. the prose of a summarized note.
+      const raw = args.content
+      // 1. LLM-first, exactly like the capture path: extract typed candidates
+      //    in the dsh process (where the model lives) and persist them. This
+      //    matters because the Python-side ``add`` path only runs the rule
+      //    engine, which silently drops free-form facts (status 'skipped') that
+      //    its narrow patterns do not match.
       if (deps.extract !== undefined) {
         try {
-          const candidates = await deps.extract(args.content)
+          const candidates = await deps.extract(raw)
           if (candidates.length > 0) {
             const r = await call<{ candidate_id?: string }>('persist_candidates', {
               user_id: uid,
@@ -105,10 +147,26 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
             return { candidate_id: r.candidate_id ?? '', status: 'queued' }
           }
         } catch {
-          /* fall through to rule extraction */
+          /* fall through */
         }
       }
-      return await call('add', { user_id: uid, session_id: sid, text: args.content, turn_id: 0 })
+      // 2. Raw knowledge fallback. The caller explicitly asked to remember this
+      //    content and extraction produced nothing — typically because a long
+      //    body exceeded the extraction output budget and the truncated payload
+      //    was discarded. Storing the text verbatim beats silently losing it.
+      //    Gated on size so short utterances still take the rule path.
+      const body = raw.trim()
+      if (body.length >= RAW_KNOWLEDGE_MIN_CHARS) {
+        const r = await call<{ candidate_id?: string }>('persist_candidates', {
+          user_id: uid,
+          session_id: sid,
+          turn_id: 0,
+          candidates: [rawKnowledgeCandidate(body)],
+        })
+        return { candidate_id: r.candidate_id ?? '', status: 'queued', fallback: 'raw' }
+      }
+      // 3. Rule path for short utterances.
+      return await call('add', { user_id: uid, session_id: sid, text: raw, turn_id: 0 })
     },
   })))
 

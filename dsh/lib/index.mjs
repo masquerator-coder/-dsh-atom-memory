@@ -17,6 +17,7 @@ const Config = z.object({
 	autostart: z.boolean().default(true),
 	captureEnabled: z.boolean().default(true),
 	llmExtractionEnabled: z.boolean().default(true),
+	extractionMaxTokens: z.number().default(2048),
 	nudgeEnabled: z.boolean().default(true),
 	nudgeIntervalMinutes: z.number().default(30),
 	preCompressionCapture: z.boolean().default(true),
@@ -246,6 +247,39 @@ var PythonBridge = class {
 //#endregion
 //#region src/tools.ts
 /**
+* Minimum trimmed length (characters) for the raw knowledge fallback. Below
+* this a `memory_add` payload is treated as an ordinary short utterance and
+* routed to the rule engine instead.
+*/
+const RAW_KNOWLEDGE_MIN_CHARS = 120;
+/** Predicate stamped on raw-fallback knowledge facts. */
+const RAW_KNOWLEDGE_PREDICATE = "知识";
+/** Longest title kept from the first line of a raw-fallback body. */
+const RAW_KNOWLEDGE_TITLE_CHARS = 60;
+/**
+* Build a candidate that stores a payload verbatim as long-form knowledge.
+*
+* Used only when the caller explicitly asked to remember the content and
+* extraction produced nothing usable. ``type`` is long-form knowledge so the
+* body stays out of the summary digest (which advertises it by ``fact_id``
+* instead of inlining it).
+*
+* @param text - The trimmed content to store.
+* @returns A candidate carrying the full body in ``content``.
+*/
+function rawKnowledgeCandidate(text) {
+	const body = text.trim();
+	const firstLine = body.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0) ?? body;
+	const title = firstLine.length <= RAW_KNOWLEDGE_TITLE_CHARS ? firstLine : `${firstLine.slice(0, RAW_KNOWLEDGE_TITLE_CHARS)}…`;
+	return {
+		subject: "用户",
+		predicate: RAW_KNOWLEDGE_PREDICATE,
+		object: title,
+		type: "sop",
+		content: body
+	};
+}
+/**
 * Resolve the **user** scope for a tool call.
 *
 * User scope must be stable across sessions so long-term memory is shared
@@ -303,8 +337,9 @@ function registerMemoryTools(deps) {
 		async execute(args, exec) {
 			const uid = args.user ?? userIdOf(exec, scope);
 			const sid = sessionIdOf(exec, scope);
+			const raw = args.content;
 			if (deps.extract !== void 0) try {
-				const candidates = await deps.extract(args.content);
+				const candidates = await deps.extract(raw);
 				if (candidates.length > 0) return {
 					candidate_id: (await call("persist_candidates", {
 						user_id: uid,
@@ -315,10 +350,21 @@ function registerMemoryTools(deps) {
 					status: "queued"
 				};
 			} catch {}
+			const body = raw.trim();
+			if (body.length >= RAW_KNOWLEDGE_MIN_CHARS) return {
+				candidate_id: (await call("persist_candidates", {
+					user_id: uid,
+					session_id: sid,
+					turn_id: 0,
+					candidates: [rawKnowledgeCandidate(body)]
+				})).candidate_id ?? "",
+				status: "queued",
+				fallback: "raw"
+			};
 			return await call("add", {
 				user_id: uid,
 				session_id: sid,
-				text: args.content,
+				text: raw,
 				turn_id: 0
 			});
 		}
@@ -790,12 +836,16 @@ function buildLlmExtractor(ctx, opts = {}) {
 			model: selection.model,
 			messages,
 			system: EXTRACTION_SYSTEM,
-			maxTokens: opts.maxTokens ?? 600,
+			maxTokens: opts.maxTokens ?? 2048,
 			purpose: "session-title"
 		};
 		const assembler = new BlockAssembler();
 		for await (const chunk of llm.stream(options)) assembler.push(chunk);
-		if (assembler.finish.kind !== "stop") return [];
+		const finished = assembler.finish;
+		if (finished.kind !== "stop") {
+			ctx.logger(`[atom-memory] extraction not persisted (finish=${finished.kind}); consider raising extractionMaxTokens (now ${opts.maxTokens ?? 2048})`);
+			return [];
+		}
 		const raw = assembler.blocks().filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
 		if (!raw) return [];
 		return parseCandidates(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
@@ -889,7 +939,7 @@ function apply(ctx, config) {
 		});
 	};
 	if (config.autostart !== false) tryStart();
-	const extract = config.llmExtractionEnabled === false ? void 0 : buildLlmExtractor(ctx, { maxTokens: 600 });
+	const extract = config.llmExtractionEnabled === false ? void 0 : buildLlmExtractor(ctx, { maxTokens: config.extractionMaxTokens ?? 2048 });
 	const capture = async (text, sessionId) => {
 		if (started.value && extract !== void 0) try {
 			const candidates = await extract(text);

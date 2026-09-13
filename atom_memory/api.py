@@ -208,7 +208,11 @@ class AtomMem:
         used = 0
         for fact in ranked:
             line = f"{fact['subject']}{fact['predicate']}{fact['object']}"
-            t = estimate_tokens(line)
+            body = fact.get("content") or ""
+            # Budget the knowledge body too: it is delivered to the model (the
+            # recall render prints it), so counting only the SPO line let a
+            # handful of long SOPs blow far past the requested budget.
+            t = estimate_tokens(line) + estimate_tokens(body)
             if used + t > token_budget and facts:
                 break
             facts.append(

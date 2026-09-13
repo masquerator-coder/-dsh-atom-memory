@@ -314,3 +314,62 @@ def test_valid_candidate_passes():
     r = validate(make())
     assert r.ok and r.kind == "ok"
 
+
+# ---- knowledge facts are multi-valued under one predicate ------------------------
+
+def _insert_typed(conn, fact_id, predicate, obj, ftype):
+    conn.execute(
+        "INSERT INTO facts(fact_id, user_id, session_id, subject, predicate, "
+        "object, type, status, observed_at, created_at) "
+        "VALUES (?, 'u1', 's1', '用户', ?, ?, ?, 'active', 1, 1)",
+        (fact_id, predicate, obj, ftype),
+    )
+
+
+def test_second_sop_with_same_predicate_does_not_conflict():
+    """Two SOPs legitimately share a predicate: the second is a new item."""
+    conn = connect_for_tests()
+    try:
+        _insert_typed(conn, "f1", "发布SOP", "A方案", "sop")
+        conn.commit()
+        r = validate(make(candidate_id="c1", predicate="发布SOP", object="B方案", type="sop"), conn=conn)
+        assert r.ok, r.reason
+    finally:
+        conn.close()
+
+
+def test_second_lesson_with_same_predicate_does_not_conflict():
+    """Light knowledge is independent too."""
+    conn = connect_for_tests()
+    try:
+        _insert_typed(conn, "f1", "教训", "先备份", "lesson")
+        conn.commit()
+        r = validate(make(candidate_id="c1", predicate="教训", object="先灰度", type="lesson"), conn=conn)
+        assert r.ok, r.reason
+    finally:
+        conn.close()
+
+
+def test_identical_knowledge_object_is_still_suppressed():
+    """Multi-valued does not disable dedup: the same item is still idempotent."""
+    conn = connect_for_tests()
+    try:
+        _insert_typed(conn, "f1", "发布SOP", "A方案", "sop")
+        conn.commit()
+        r = validate(make(candidate_id="c1", predicate="发布SOP", object="A方案", type="sop"), conn=conn)
+        assert not r.ok and r.kind == "idempotent"
+    finally:
+        conn.close()
+
+
+def test_semantic_attribute_stays_single_valued():
+    """The knowledge exemption must not loosen plain attributes."""
+    conn = connect_for_tests()
+    try:
+        _insert_typed(conn, "f1", "职业", "工程师", "semantic")
+        conn.commit()
+        r = validate(make(candidate_id="c1", predicate="职业", object="医生", type="semantic"), conn=conn)
+        assert not r.ok and r.kind == "conflict"
+    finally:
+        conn.close()
+

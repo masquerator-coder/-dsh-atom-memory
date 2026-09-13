@@ -474,3 +474,40 @@ def test_summary_read_refreshes_stale_and_lists_drill_down_pointers(tmp_path, mo
     assert "f-sop" in text                  # with the fact_id to drill into
     assert "覆盖 3 条活跃事实" in text
 
+
+# ---- recall budgets the knowledge body, not just the SPO title -----------------------
+
+def test_recall_budgets_knowledge_content(tmp_path, monkeypatch):
+    """A long knowledge body counts toward the recall token budget."""
+    from atom_memory.extractor import _candidate_from_dict
+
+    mem = _make(tmp_path, monkeypatch)
+
+    async def scenario():
+        await mem.start()
+        long_body = "长知识正文。" * 400  # ~2400 chars, far over a small budget
+        for predicate, obj, ftype, content in (
+            ("名字", "小强哥", "semantic", None),
+            ("偏好", "黑咖啡", "semantic", None),
+            ("运维手册", "部署流程", "sop", long_body),
+        ):
+            cand = _candidate_from_dict(
+                {
+                    "subject": "用户", "predicate": predicate, "object": obj,
+                    "type": ftype, "content": content,
+                    "confidence": 0.7, "importance": 0.5,
+                },
+                "u1", "s1", 0,
+            )
+            await mem._worker._persist_fact(cand, None)
+        small = await mem.recall("u1", "用户", token_budget=100, top_k=10)
+        big = await mem.recall("u1", "用户", token_budget=100000, top_k=10)
+        await mem.stop()
+        return small, big
+
+    small, big = _run(scenario())
+    # The three SPO lines alone are ~21 tokens, so before content was counted
+    # every one of them fitted a 100-token budget. Now the body dominates.
+    assert len(small["facts"]) < len(big["facts"])
+    assert len(big["facts"]) == 3
+

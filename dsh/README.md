@@ -35,18 +35,20 @@ pnpm build       # -> lib/index.mjs
 | `autostart` | `true` | 加载即启动桥接（部署期开关） |
 | `captureEnabled` | `true` | per-message 捕获 |
 | `llmExtractionEnabled` | `true` | 启用以 dsh 默认模型作 LLM-first 抽取 |
+| `extractionMaxTokens` | `2048` | 单次抽取的输出 token 上限（需装下知识正文，过小会静默丢长知识） |
 | `preCompressionCapture` | `true` | 压缩前抢救 |
 | `nudgeEnabled` | `true` | 周期微调（写路径） |
 | `nudgeIntervalMinutes` | `30` | 微调周期 |
 | `maxRecalledFacts` | `10` | 每次召回给模型的条数上限 |
 | `memoryMdTokens` | `1500` | memory.md token 上限 |
+| `contextInjectionEnabled` | `true` | 会话起始冻结快照注入系统提示词 |
 | `rpcTimeoutMs` | `30000` | 单次 RPC 超时 |
 
 ## 工具（模型可见面）
 
 | 工具 | 说明 |
 | --- | --- |
-| `memory_add` | 显式记住原始内容（LLM-first → 规则回退） |
+| `memory_add` | 显式记住原始内容（LLM-first → 长内容原文兜底 → 规则回退） |
 | `memory_summary` | 返回记忆的聚合摘要（属性/偏好/工作流程/事件/轻量知识），"先看摘要、再查明细"入口；附带覆盖的 `fact_id` 清单与「未展开长文知识」提示 |
 | `memory_recall` | 语义+全文混合召回；模型可见内容含 `fact_id`、`type` **与 `content` 正文**，并前置聚合摘要 |
 | `memory_forget` | 软删除（retract）一条事实 |
@@ -88,6 +90,23 @@ memory_summary（概览：聚合摘要 + 覆盖的 fact_id + 未展开长文知�
 > 因此摘要可能长期停留在 `stale`。读取路径（`recall` / `summary`）会在返回前按需
 > 重建，保证读到的摘要始终是当前内容（聚合是纯内存字符串工作，无模型调用，代价低）。
 
+### 长知识（SOP / few-shot / 经验教训）的写入与预算
+
+长正文最容易在链路上丢失，因此有四道保障：
+
+1. **抽取输出预算可配**：`extractionMaxTokens`（默认 2048，见 `config.ts`）。整份抽取
+   JSON（含 `content` 正文）必须装进这个预算；超限会被截断，而**被截断的抽取会被整份
+   丢弃**（`llm-extractor.ts` 只在 `finish.kind === 'stop'` 时采用），因此预算过小会
+   静默丢长知识。旧值硬编码 600，现改为可配并有截断日志。
+2. **原文兜底**：`memory_add` 若抽取无结果且内容 ≥ 120 字符，则**以原文构造一条
+   knowledge 事实**（`subject=用户`, `predicate=知识`, `object=`首行标题,
+   `type=sop`, `content=`全文）而不是丢弃。短句仍走规则路径。
+3. **知识类多值化**：校验链的冲突检查把 `sop`/`few_shot`/`decision_rule`/`lesson`
+   视为互相独立（同谓词下多条共存不再是 conflict）；完全相同则仍按 `idempotent` 去重。
+   普通语义属性（如 `职业`）仍保持单值。
+4. **正文计入召回预算**：`recall` 的 `token_budget` 现在同时估算 SPO 与 `content`，
+   避免若干条长 SOP 让返回体远超预算（首条始终保留，以免预算过小时返回空）。
+
 ## Known Limitations
 
 - **跨进程一致性**：记忆完全在 Python 侧；dsh 重启后需重新 `start` 桥接
@@ -95,9 +114,12 @@ memory_summary（概览：聚合摘要 + 覆盖的 fact_id + 未展开长文知�
   无上限重生（最多 3 次后退避）。
 - **LLM 默认模型**：抽取使用 `agentDefaultModel.currentSelection()`；若当前预设
   无默认模型，则 LLM 路径关闭，退化为纯规则抽取。
-- **捕获钩子**：per-message/压缩前/微调钩子是 best-effort（不会打断主线循环）；
-  强特征关键词门避免整段闲聊入库。`user/message` 等事件来自 dsh 的 durable
-  会话日志，可重放。
+- **捕获钩子**：per-message/压缩前/定期微调钩子是 best-effort（不会打断主线循环）；
+  每条直接用户消息都送 LLM 抽取，是否成事实由抽取器判断（无关键词门）。
+  `user/message` 等事件来自 dsh 的 durable 会话日志，可重放。
+- **单条超预算**：召回预算的首条保留策略意味着**单条**长知识仍可能超过
+  `token_budget`（上例中预算 100 却返回了 ~2100 tokens 的一条）。需要硬上限时
+  可在 `render` 侧截断正文，目前未做。
 - **Windows**：stdio 轮询通过 `run_in_executor` 线程读取 stdin（Proactor 事件循环
   无法用 `connect_read_pipe` 驱动管道读）。
 
