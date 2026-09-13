@@ -28,6 +28,8 @@ export interface Config {
   maxRecalledFacts?: number
   /** Estimated token cap for returned memory.md. */
   memoryMdTokens?: number
+  /** Inject a session-start-frozen memory.md snapshot into the system prompt. */
+  contextInjectionEnabled?: boolean
   /** Per-RPC timeout in ms. */
   rpcTimeoutMs?: number
 }
@@ -43,6 +45,7 @@ export const Config: z<Config> = z.object({
   preCompressionCapture: z.boolean().default(true),
   maxRecalledFacts: z.number().default(10),
   memoryMdTokens: z.number().default(1500),
+  contextInjectionEnabled: z.boolean().default(true),
   rpcTimeoutMs: z.number().default(30_000),
 })
 

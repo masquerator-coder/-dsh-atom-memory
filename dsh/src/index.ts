@@ -8,7 +8,9 @@
  *    typed candidates to Python for persistence (rules remain the fallback),
  *  - registers durable capture hooks (per-message, pre-compression rescue,
  *    periodic nudge) so conversation turns into memory automatically,
- *  - injects a system-prompt awareness section.
+ *  - injects a system-prompt awareness section plus a per-session memory
+ *    snapshot frozen at the session's first prompt assembly (so the prompt
+ *    prefix never changes mid-session and KV cache stays valid).
  *
  * It never modifies dsh source and never imports the Python library — all
  * memory lives in the isolated child process, reached over the NDJSON bridge.
@@ -142,8 +144,14 @@ export function apply(ctx: Context, config: ConfigShape): void {
     },
   ).forEach((d) => ctx.effect(() => d))
 
-  // System-prompt awareness.
-  registerMemoryContext(ctx)
+  // System-prompt awareness + the session-start-frozen memory snapshot.
+  registerMemoryContext({
+    ctx,
+    bridge,
+    userScope: FALLBACK_SCOPE,
+    maxTokens: config.memoryMdTokens ?? 1500,
+    snapshotEnabled: config.contextInjectionEnabled !== false,
+  })
 
   ctx.logger('[dsh-atom-memory] loaded')
 }

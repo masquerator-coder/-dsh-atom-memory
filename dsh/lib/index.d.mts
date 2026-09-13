@@ -22,6 +22,8 @@ interface Config {
   maxRecalledFacts?: number;
   /** Estimated token cap for returned memory.md. */
   memoryMdTokens?: number;
+  /** Inject a session-start-frozen memory.md snapshot into the system prompt. */
+  contextInjectionEnabled?: boolean;
   /** Per-RPC timeout in ms. */
   rpcTimeoutMs?: number;
 }
