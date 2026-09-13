@@ -1,0 +1,22 @@
+# dsh-atom-memory dsh bundle layer.
+#
+# Mounts the Python-backed memory plugin into the runtime plugin tree. This is
+# an insert (not an id-targeted override) because the base layer has no row of
+# id `atom-memory` — insert rows carry a `name`; override rows, which would
+# omit it, are for replacing an existing loader id.
+#
+# `dbPath` is where the Python SQLite database lives. `pythonBin` overrides the
+# interpreter used to spawn `python -m dsh_atom_memory.rpc` (leave unset to use
+# `python` on PATH). The plugin stays inert until loaded.
+- insert:
+    - id: atom-memory
+      name: dsh-atom-memory-dsh
+      config:
+        dbPath: "~/.dsh/atom-memory/memory.db"
+        pythonBin: ""
+        captureEnabled: true
+        llmExtractionEnabled: true
+        nudgeEnabled: true
+        nudgeIntervalMinutes: 30
+        preCompressionCapture: true
+        autostart: true

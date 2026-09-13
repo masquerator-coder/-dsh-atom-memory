@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsh-atom-memory"
+version = "0.1.0"
+description = "Lightweight in-process long-term memory plugin for DeepSeek Harness (atomic facts + vector/FTS retrieval)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "dsh-atom-memory" }]
+keywords = ["memory", "sqlite", "sqlite-vec", "fastembed", "fts5", "deepseek-harness"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+    "sqlite-vec>=0.1.6",
+    "fastembed>=0.3.0",
+    "jieba>=0.42.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["dsh_atom_memory*"]
+
+[tool.setuptools.package-data]
+dsh_atom_memory = ["migrations/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
