@@ -352,7 +352,16 @@ function registerMemoryTools(deps) {
 				const summaries = (v.summaries ?? []).map((s) => (s.text ?? "").trim()).filter(Boolean);
 				const blocks = [];
 				if (summaries.length > 0) blocks.push(`【摘要】${summaries.join("；")}`);
-				blocks.push(facts.length === 0 ? "（无相关记忆）" : facts.map((f) => `- ${f.subject ?? ""}${f.predicate ?? ""}: ${f.object ?? ""}`).join("\n"));
+				if (facts.length === 0) blocks.push("（无相关记忆）");
+				else blocks.push(facts.map((f) => {
+					const head = [
+						f.fact_id ? `[${f.fact_id}]` : "",
+						`${f.subject ?? ""}${f.predicate ?? ""}: ${f.object ?? ""}`,
+						f.type ? `*(${f.type})*` : ""
+					].filter(Boolean).join(" ");
+					const body = (f.content ?? "").trim();
+					return body ? `- ${head}\n    > ${body}` : `- ${head}`;
+				}).join("\n"));
 				return [{
 					type: "text",
 					text: blocks.join("\n")

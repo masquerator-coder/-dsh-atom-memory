@@ -74,31 +74,49 @@ describe('memory tools user scope', () => {
     expect(bridge.call.mock.calls.at(-1)![1]!.user_id).toBe('global')
   })
 
-  it('memory_recall surfaces the aggregate summary instead of dropping it', async () => {
+  it('memory_recall renders the full detail: fact_id, type and knowledge body', async () => {
     const { bridge, registered } = setup()
     const recall = registered.find((d) => d.name === 'memory_recall')!
     bridge.call.mockResolvedValue({
-      facts: [{ subject: '用户', predicate: '偏好', object: '黑咖啡' }],
-      summaries: [{ text: '偏好 黑咖啡 (喜欢)' }],
-      token_count: 12,
+      facts: [
+        {
+          fact_id: 'f-lesson-1', subject: '用户', predicate: '教训',
+          object: '先备份再升级', type: 'lesson',
+          content: '升级前先完整备份数据库。',
+        },
+        { fact_id: 'f-name-1', subject: '用户', predicate: '名字', object: '小强哥', type: 'semantic', content: null },
+      ],
+      summaries: [{ text: '名字: 小强哥' }],
+      token_count: 20,
     })
 
-    const result = (await recall.execute({ query: '咖啡' }, execWithSession('session-XXX'))) as any
-    expect(result.summaries).toEqual([{ text: '偏好 黑咖啡 (喜欢)' }])
-    expect(result.facts).toHaveLength(1)
+    const result = (await recall.execute({ query: '升级' }, execWithSession('session-XXX'))) as any
+    expect(result.summaries).toEqual([{ text: '名字: 小强哥' }])
+    expect(result.facts).toHaveLength(2)
 
-    // The rendered text must show the summary, not just the facts.
-    const rendered = recall.output!.render!({ query: '咖啡' }, result) as Array<{ text: string }>
-    expect(rendered[0]!.text).toContain('【摘要】')
-    expect(rendered[0]!.text).toContain('偏好 黑咖啡 (喜欢)')
-    expect(rendered[0]!.text).toContain('- 用户偏好: 黑咖啡')
+    const rendered = recall.output!.render!({ query: '升级' }, result) as Array<{ text: string }>
+    const text = rendered[0]!.text
+    // summary first, then the drilled-in facts
+    expect(text).toContain('【摘要】')
+    // the knowledge BODY must reach the model (a render that only showed the
+    // SPO title would hide exactly what recall exists to retrieve)
+    expect(text).toContain('升级前先完整备份数据库。')
+    expect(text).toContain('(lesson)')
+    expect(text).toContain('[f-lesson-1]')
+    // a fact without content still renders as a single SPO line
+    expect(text).toContain('- [f-name-1] 用户名字: 小强哥 *(semantic)*')
   })
 
   it('memory_summary fetches the aggregate summary under the fallback scope', async () => {
     const { bridge, registered } = setup()
     const summary = registered.find((d) => d.name === 'memory_summary')!
     expect(summary).toBeTruthy()
-    bridge.call.mockResolvedValue('# 摘要 (Summary) — global\n\n职业: 工程师')
+    bridge.call.mockResolvedValue(
+      '# 摘要 (Summary) — global\n\n## global (v3)\n\n职业: 工程师\n\n'
+      + '> ⚠ 另有 1 条长文知识（SOP/few-shot）未展开正文，需要时用 memory_recall 检索，'
+      + '或直接查看 fact_id: f-sop\n'
+      + '> 覆盖 2 条活跃事实 · fact_id: f-job, f-sop',
+    )
 
     const result = (await summary.execute({}, execWithSession('session-YYY'))) as any
     const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
@@ -107,7 +125,9 @@ describe('memory tools user scope', () => {
     expect(result.text).toContain('职业: 工程师')
 
     const rendered = summary.output!.render!({}, result) as Array<{ text: string }>
-    expect(rendered[0]!.text).toContain('职业: 工程师')
+    // drill-down pointers must survive to the model
+    expect(rendered[0]!.text).toContain('未展开正文')
+    expect(rendered[0]!.text).toContain('fact_id: f-job, f-sop')
   })
 
   it('memory_stats / memory_user_md / memory_memory_md use the fallback user scope', async () => {

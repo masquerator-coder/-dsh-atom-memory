@@ -432,3 +432,45 @@ def test_llm_failure_falls_back_to_rules_through_worker(tmp_path, monkeypatch):
     assert len(rows) == 1
     assert (rows[0]["predicate"], rows[0]["object"]) == ("偏好", "黑咖啡")
 
+
+# ---- summary read path: stale refresh + drill-down pointers --------------------------
+
+def _insert_fact(conn, fact_id, predicate, obj, ftype):
+    conn.execute(
+        "INSERT INTO facts(fact_id, user_id, session_id, subject, predicate, "
+        "object, type, status, observed_at, created_at) "
+        "VALUES (?, 'u1', 's1', '用户', ?, ?, ?, 'active', 1000, 1000)",
+        (fact_id, predicate, obj, ftype),
+    )
+
+
+def test_summary_read_refreshes_stale_and_lists_drill_down_pointers(tmp_path, monkeypatch):
+    """summary() rebuilds a stranded stale summary and points at unexpanded knowledge."""
+    mem = _make(tmp_path, monkeypatch)
+
+    async def scenario():
+        await mem.start()
+        _insert_fact(mem.db, "f-name", "名字", "小强哥", "semantic")
+        _insert_fact(mem.db, "f-lesson", "教训", "先备份再升级", "lesson")
+        _insert_fact(mem.db, "f-sop", "发布SOP", "构建测试部署", "sop")
+        mem.db.commit()
+
+        # Strand the summary: stale with no rescheduled rebuild (debounce>0).
+        mark_stale(mem.db, "u1")
+
+        text = await mem.summary("u1")
+        stale = mem.db.execute(
+            "SELECT stale FROM summaries WHERE user_id='u1'"
+        ).fetchone()["stale"]
+        await mem.stop()
+        return text, stale
+
+    text, stale = _run(scenario())
+    assert stale == 0                       # the read path refreshed it
+    assert "名字: 小强哥" in text             # aggregated content
+    assert "教训: 先备份再升级" in text
+    assert "发布SOP" not in text             # long-form body stays out of the digest
+    assert "未展开正文" in text              # ...but is advertised as drillable
+    assert "f-sop" in text                  # with the fact_id to drill into
+    assert "覆盖 3 条活跃事实" in text
+

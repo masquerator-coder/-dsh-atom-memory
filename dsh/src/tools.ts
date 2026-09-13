@@ -9,9 +9,11 @@
  * free-form content is not silently dropped by the rule engine's narrow
  * patterns.
  *
- * Tools are the only model-visible surface: their ``output.schema`` keeps what
- * a model can read structured, and ``output.render`` gives the UI a readable
- * fallback text.
+ * Tools are the only model-visible surface. What the model actually reads is
+ * the ``ContentBlock[]`` returned by ``output.render``; ``output.schema`` only
+ * types/validates the structured value (and tags what a host presenter may
+ * project). A fact that is not spelled out in ``render`` is therefore invisible
+ * to the model no matter what the structured value carries.
  *
  * @module dsh-atom-memory/tools
  */
@@ -122,15 +124,32 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       schema: { type: 'object', additionalProperties: true },
       render(_args, value) {
         const v = value as {
-          facts?: Array<{ subject?: string; predicate?: string; object?: string }>
+          facts?: Array<{
+            fact_id?: string; subject?: string; predicate?: string
+            object?: string; type?: string; content?: string | null
+          }>
           summaries?: Array<{ text?: string }>
         }
         const facts = v.facts ?? []
         const summaries = (v.summaries ?? []).map(s => (s.text ?? '').trim()).filter(Boolean)
         const blocks: string[] = []
         if (summaries.length > 0) blocks.push(`【摘要】${summaries.join('；')}`)
-        blocks.push(facts.length === 0 ? '（无相关记忆）' : facts
-          .map(f => `- ${f.subject ?? ''}${f.predicate ?? ''}: ${f.object ?? ''}`).join('\n'))
+        if (facts.length === 0) {
+          blocks.push('（无相关记忆）')
+        } else {
+          // Render the full detail, not just the SPO title: for knowledge facts
+          // (lesson / sop / few-shot) the body in `content` IS the answer, and
+          // a render that omitted it would hide exactly what recall is for.
+          blocks.push(facts.map((f) => {
+            const head = [
+              f.fact_id ? `[${f.fact_id}]` : '',
+              `${f.subject ?? ''}${f.predicate ?? ''}: ${f.object ?? ''}`,
+              f.type ? `*(${f.type})*` : '',
+            ].filter(Boolean).join(' ')
+            const body = (f.content ?? '').trim()
+            return body ? `- ${head}\n    > ${body}` : `- ${head}`
+          }).join('\n'))
+        }
         return [{ type: 'text', text: blocks.join('\n') }]
       },
     },

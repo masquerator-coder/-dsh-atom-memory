@@ -22,12 +22,24 @@ from .config import MemConfig
 from .db import now_ms, open_db
 from .embedder import Embedder
 from .memory_md import generate_memory_md
+from .models import SUMMARY_EXCLUDED_KNOWLEDGE
 from .profile import derive_profile_from_facts, profile_md
 from .retriever import Retriever, estimate_tokens
 from .summarizer import SCOPE_GLOBAL, rebuild_summary
 from .worker import Worker
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_fact_ids(raw) -> list:
+    """Parse the ``summaries.fact_ids`` JSON column into a list of ids."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    return [str(x) for x in parsed] if isinstance(parsed, list) else []
 
 
 class AtomMem:
@@ -326,6 +338,11 @@ class AtomMem:
         intended as the cheap "look first, then drill in with recall" view. It
         is refreshed first when missing or stale.
 
+        The rendering carries the covered ``fact_id``s and an explicit note
+        about long-form knowledge (SOP / few-shot) whose body was deliberately
+        left out of the digest, so a reader can see *that* there is detail to
+        drill into and *which* facts hold it.
+
         Args:
             user_id: The user whose summary is rendered.
 
@@ -337,7 +354,7 @@ class AtomMem:
             raise RuntimeError("AtomMem is not started; call start() first")
         self._ensure_summary(user_id)
         rows = self.db.execute(
-            "SELECT scope, theme, text, version FROM summaries "
+            "SELECT scope, theme, text, version, fact_ids FROM summaries "
             "WHERE user_id = ? AND stale = 0 ORDER BY scope",
             (user_id,),
         ).fetchall()
@@ -348,12 +365,50 @@ class AtomMem:
             )
         lines = [f"# 摘要 (Summary) — {user_id}", ""]
         for r in rows:
+            fact_ids = _parse_fact_ids(r["fact_ids"])
             lines.append(f"## {r['theme'] or r['scope']} (v{r['version']})")
             lines.append("")
             lines.append(r["text"])
             lines.append("")
+            excluded = self._excluded_knowledge_ids(user_id, fact_ids)
+            if excluded:
+                lines.append(
+                    f"> ⚠ 另有 {len(excluded)} 条长文知识（SOP/few-shot）未展开正文，"
+                    f"需要时用 memory_recall 检索，或直接查看 fact_id: "
+                    f"{', '.join(excluded)}"
+                )
+            lines.append(
+                f"> 覆盖 {len(fact_ids)} 条活跃事实 · fact_id: {', '.join(fact_ids) or '（无）'}"
+            )
         lines.append("> 生成于 dsh-atom-memory · 由活跃事实聚合而成")
         return "\n".join(lines)
+
+    def _excluded_knowledge_ids(self, user_id: str, fact_ids: list) -> list:
+        """Return the subset of ``fact_ids`` whose type is long-form knowledge.
+
+        Those bodies are intentionally absent from the summary text, so the
+        caller surfaces their ids as drill-down pointers.
+
+        Args:
+            user_id: Owner of the facts.
+            fact_ids: Fact ids covered by the summary.
+
+        Returns:
+            Fact ids whose ``type`` is in ``SUMMARY_EXCLUDED_KNOWLEDGE``.
+        """
+        if self.db is None or not fact_ids:
+            return []
+        placeholders = ",".join("?" for _ in fact_ids)
+        rows = self.db.execute(
+            f"SELECT fact_id, type FROM facts WHERE user_id = ? "
+            f"AND fact_id IN ({placeholders})",
+            (user_id, *fact_ids),
+        ).fetchall()
+        return [
+            r["fact_id"]
+            for r in rows
+            if (r["type"] or "semantic") in SUMMARY_EXCLUDED_KNOWLEDGE
+        ]
 
     def _ensure_summary(self, user_id: str) -> None:
         """Rebuild the user's summary when it is missing or stale.
