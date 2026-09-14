@@ -48,7 +48,7 @@ declare module '@deepseek-ai/cordis' {
  */
 export class AtomMemoryController extends TypertRemoteService {
   constructor(ctx: Context, private readonly bridge: PythonBridge, private readonly runtime: Runtime) {
-    super(ctx, 'atomMemoryController', { namespace: 'atom-memory' })
+    super(ctx, 'atomMemoryController', { namespace: 'atomMemory' })
   }
 
   /** Whether the bridge is alive and the plugin master switch is on. */

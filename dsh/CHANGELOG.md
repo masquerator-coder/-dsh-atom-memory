@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Fixed
+- **记忆设置面板报「操作失败：this.r(...).listFacts is not a function」**：根因是浏览器侧
+  从未把插件自带的 `atomMemory` Remote 命名空间 **mount 进 `ctx.remote`**——dsh 的
+  `@deepseek-ai/dsh-api-remotes` 只 mount 它自己的生成命名空间（settings/workspace/…），
+  外部插件的 `@Remote` 方法没有对应的客户端 `InvocationDescriptor`，因此
+  `ctx.remote.atomMemory` 既不存在方法、也不会有 `listFacts`。此前浏览器端还把
+  `ctx.remote`（整个 remote 服务）误当作 `atomMemory` 命名空间传给控制器 → `.listFacts`
+  为 undefined。修复：① 新增 `src/client/remote.ts`，手写与 Host `AtomMemoryController`
+  精确对齐的 `atomMemory` 命名空间贡献（8 个 `@Remote` 方法、strict JSON codec——
+  客户端 mount 要求 `mode:'strict'`+`schema.parse`，不接受裸 `src-json`），在
+  `apply` 里 `await ctx.remote.$mount(...)` 挂载；② 把 `ctx.remote.atomMemory`
+  （而非 `ctx.remote`）传给控制器；③ 因 `ctx.remote.atomMemory` 需要服务键
+  `remote.atomMemory`，把 Host Remote **wire 命名空间**由 `atom-memory` 改为 `atomMemory`
+  （设置命名空间 `atom-memory` 不变，与 Remote 命名空间是两套）。已用 Babel 2023-11
+  downlevel 夹具验证 `@Remote` 标记确实能被 `remoteMethods()` 读到，并新增
+  `tests/remote-contribution.test.ts`（含与 Host 源码 `@Remote` 集合交叉校验）。
 - **设置页不出现「记忆」按钮（再修）**：根因是 `dsh.client` 与 `exports["./client"]`
   只写在了**子子包 `dsh/package.json`** 上，而 dsh 的 `client-modules` 服务扫描的是
   **宿主 Loader 的 plugin tree 条目**（`dsh.profile.bundles` 里的 loader row id），

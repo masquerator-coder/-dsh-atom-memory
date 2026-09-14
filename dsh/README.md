@@ -76,7 +76,13 @@ pnpm build       # -> lib/index.mjs
 > 每个条目解析到一份清单；若只写在子子包 `dsh/package.json` 上，根清单没有
 > `dsh.client` 会被判为「不是 client row」，浏览器收不到 bundle、设置分区不挂载。
 > 故 git 安装后无需再跑 dsh 的 dev:web 构建即可在设置页出现「记忆」分区。
-> `src/client` 源码头仍保留，用 `tsconfig.client.json` 做类型校验。
+> `src/client` 源码头仍保留，用 `tsconfig.client.json` 做类型校验。**Remote 命名空间
+> 需浏览器端自行挂载**：`@deepseek-ai/dsh-api-remotes` 只 mount 它自带的命名空间，
+> 外部插件必须用自己的客户端 `InvocationDescriptor` 调 `ctx.remote.$mount(...)`
+> 才能有 `ctx.remote.atomMemory.*`。本插件在 `src/client/remote.ts` 手写与 Host
+> `AtomMemoryController` 对齐的 `atomMemory` 命名空间贡献（strict JSON codec），
+> `apply` 里 `$mount` 后把 `ctx.remote.atomMemory` 交给控制器。Host 侧 Remote wire
+> 命名空间为 `atomMemory`（与设置命名空间 `atom-memory` 是两套，互不冲突）。
 
 ## 工具（模型可见面）
 

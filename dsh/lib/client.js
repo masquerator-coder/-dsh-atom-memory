@@ -600,6 +600,46 @@ window.__ModuleLoader__.load({
 			});
 		}
 		//#endregion
+		//#region src/client/remote.ts
+		/** The Remote wire namespace this browser half mounts (matches the Host binding). */
+		const REMOTE_NAMESPACE = "atomMemory";
+		const JSON_CODEC = {
+			mode: "strict",
+			typeSymbol: "dsh-atom-memory#JsonValue",
+			schema: { parse: (value) => value }
+		};
+		/** One descriptor for a Host method whose single argument is a JSON `args` object. */
+		function jsonArgsMethod(method, hasArgs) {
+			return {
+				id: `${REMOTE_NAMESPACE}/${method}`,
+				service: "atomMemoryController",
+				namespace: REMOTE_NAMESPACE,
+				method,
+				invocation: { kind: "direct" },
+				parameters: hasArgs ? [{
+					name: "args",
+					wire: "args",
+					source: "json",
+					codec: JSON_CODEC
+				}] : [],
+				result: JSON_CODEC
+			};
+		}
+		/** The `atomMemory` contribution mounted by this browser half. */
+		const ATOM_MEMORY_REMOTE = {
+			package: "dsh-atom-memory",
+			descriptors: [
+				jsonArgsMethod("listFacts", true),
+				jsonArgsMethod("editFact", true),
+				jsonArgsMethod("listProfile", true),
+				jsonArgsMethod("upsertProfile", true),
+				jsonArgsMethod("deleteProfile", true),
+				jsonArgsMethod("backup", true),
+				jsonArgsMethod("restore", true),
+				jsonArgsMethod("getRuntime", false)
+			]
+		};
+		//#endregion
 		//#region src/client/index.ts
 		/** The settings namespace registered by the Host plugin. */
 		const SETTINGS_NAMESPACE = "atom-memory";
@@ -614,10 +654,11 @@ window.__ModuleLoader__.load({
 		* Mount the memory settings section.
 		* @param ctx - the browser plugin context.
 		*/
-		function apply(ctx) {
+		async function apply(ctx) {
 			const t = ctx.locale.bind(LOCALE_NS);
 			ctx.effect(() => ctx.locale.register(LOCALE_NS, dicts), "atom-memory: section dictionaries");
-			const controller = new MemorySettingsController(ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }), ctx.remote);
+			const disposeRemote = await ctx.remote.$mount(ATOM_MEMORY_REMOTE);
+			const controller = new MemorySettingsController(ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }), ctx.remote.atomMemory);
 			ctx.effect(() => () => {
 				controller.dispose();
 			}, "atom-memory: controller");
@@ -629,6 +670,10 @@ window.__ModuleLoader__.load({
 				locale: LOCALE_NS,
 				inject: () => controller.inject()
 			}, MemorySettingsSection));
+			return async () => {
+				controller.dispose();
+				await disposeRemote();
+			};
 		}
 		//#endregion
 		exports.apply = apply;

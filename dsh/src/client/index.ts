@@ -19,6 +19,7 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import { MemorySettingsController } from './memory-settings-controller.ts'
 import { MemorySettingsSection } from './MemorySettingsSection.tsx'
 import { dicts, LOCALE_NS } from './locales.ts'
+import { ATOM_MEMORY_REMOTE } from './remote.ts'
 
 /** The settings namespace registered by the Host plugin. */
 const SETTINGS_NAMESPACE = 'atom-memory'
@@ -30,13 +31,18 @@ export const inject = ['slots', 'locale', 'settingsScope', 'remote'] as const
  * Mount the memory settings section.
  * @param ctx - the browser plugin context.
  */
-export function apply(ctx: Context): void {
+export async function apply(ctx: Context): Promise<() => void> {
   const t = ctx.locale.bind(LOCALE_NS)
   ctx.effect(() => ctx.locale.register(LOCALE_NS, dicts), 'atom-memory: section dictionaries')
 
+  // The Host `AtomMemoryController` is not one of the `@deepseek-ai/dsh-api-remotes`
+  // assembly namespaces, so the browser has no auto-generated descriptors for it.
+  // Mount them here, then hand the namespace service to the controller.
+  const disposeRemote = await ctx.remote.$mount(ATOM_MEMORY_REMOTE)
+
   const controller = new MemorySettingsController(
     ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }),
-    ctx.remote,
+    ctx.remote.atomMemory as unknown,
   )
   ctx.effect(() => () => { controller.dispose() }, 'atom-memory: controller')
 
@@ -49,4 +55,9 @@ export function apply(ctx: Context): void {
     locale: LOCALE_NS,
     inject: () => controller.inject(),
   }, MemorySettingsSection))
+
+  return async () => {
+    controller.dispose()
+    await disposeRemote()
+  }
 }
