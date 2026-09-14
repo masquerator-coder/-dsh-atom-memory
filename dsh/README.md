@@ -43,7 +43,7 @@ pnpm build       # -> lib/index.mjs
 | `nudgeIntervalMinutes` | `30` | 微调周期 |
 | `maxRecalledFacts` | `10` | 每次召回给模型的条数上限 |
 | `memoryMdTokens` | `1500` | `memory_memory_md` 工具返回的 memory.md 完整清单 token 上限（设置弹窗走同一预算，但取紧凑深度） |
-| `injectedMemoryMdTokens` | `1500` | 注入系统提示词的紧凑快照 token 上限（与上者分开：注入内容每个请求都要付费） |
+| `injectedMemoryMdTokens` | `800` | 注入系统提示词的紧凑快照 token 上限（与上者分开：注入内容每个请求都要付费）。**仅作为初值**：运行时由设置面板的「注入体积」接管 |
 | `contextInjectionEnabled` | `true` | 会话起始冻结快照注入系统提示词 |
 | `rpcTimeoutMs` | `30000` | 单次 RPC 超时 |
 
@@ -51,15 +51,16 @@ pnpm build       # -> lib/index.mjs
 
 插件自带浏览器 client-plugin（`src/client/`），在 **dsh 设置**侧边栏贡献独立的
 **「记忆」** 分区。`enabled`/`llmExtractionEnabled`/`contextInjectionEnabled`/
-`captureEnabled`/`extractionModel` 通过 `installSection` 注册为 `atom-memory`
-设置命名空间，因此**在设置界面改即实时生效、无需重启**；其余字段仍走部署期
-`schemastery` 配置。
+`captureEnabled`/`extractionModel`/`injectedMemoryMdTokens` 通过 `installSection`
+注册为 `atom-memory` 设置命名空间，因此**在设置界面改即实时生效、无需重启**；
+其余字段仍走部署期 `schemastery` 配置。
 
-面板五大功能：
+面板六大功能：
 
 | 功能 | 说明 | 走线 |
 | --- | --- | --- |
 | 记忆开关 | `enabled` 主开关，实时热切换 | `settings<atom-memory>.enabled` → host `Runtime` |
+| 注入体积 | memory.md 注入系统提示词的大小：档位（精简 300 / 标准 800 / 详尽 1500）+ 自定义（100–20000 tokens，越界自动收敛） | `settings<atom-memory>.injectedMemoryMdTokens` → `context.ts` 冻结时求值 |
 | LLM 抽取模型 | 跟随 dsh 默认 / 手动 provider+model | `settings<atom-memory>.extractionModel` → `llm-extractor` |
 | user 画像编辑 | 画像行增删改（`user_explicit` 最高优先级） | `remote.atomMemory.listProfile/upsertProfile/deleteProfile` |
 | 记忆与编辑 | 原子事实列表查看/编辑（SPO/content/type），摘要查看；「查看 memory.md」弹窗渲染**与注入系统提示词完全相同**的紧凑视图（按类型分组、不含 `fact_id`） | `remote.atomMemory.listFacts/editFact/memoryMd` |
@@ -113,9 +114,15 @@ memory_summary（概览：聚合摘要 + 覆盖的 fact_id + 未展开长文知�
 ```
 
 > **注入版 vs 完整版**：会话起始冻结进系统提示词的是**紧凑版** memory.md——按记忆类型
-> 分组、`fact_id` 全部省略、按重要度（`importance`，缺失时回落类型默认分）排序、长知识
-> 正文截断，且渲染总长度（含页脚）保证不超 `injectedMemoryMdTokens`。`fact_id` 仍可经
-> `memory_recall`、`memory_memory_md` 与设置界面取得。
+> 分组、`fact_id` 全部省略、长知识正文截断，且渲染总长度（含页脚）保证不超
+> `injectedMemoryMdTokens`。`fact_id` 仍可经 `memory_recall`、`memory_memory_md`
+> 与设置界面取得。
+>
+> **预算收紧时保留什么**：每条事实按「重要度 × 近期」混合打分
+> （`memory_md.py`：`_IMPORTANCE_WEIGHT = 0.7`、`_RECENCY_WEIGHT = 0.3`，
+> 近期以「相对最新一条」的半衰期 14 天计），预算不足时**全局**从分值最低的行开始放弃。
+> 因此分组顺序与取舍都由分值决定，不是按类型固定次序整段砍——最新发生的事不会仅仅因为
+> 落在排序最末的分组里就被丢掉。页脚会注明省略了多少条、哪些分组被整体隐藏。
 
 长文知识（`sop` / `few_shot`）的正文**被有意排除在摘要文本之外**（体量太大），但摘要会
 显式提示「另有 N 条未展开」并给出 `fact_id`，避免"先看摘要"反而把需要下钻的内容藏起来。

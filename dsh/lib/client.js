@@ -7,6 +7,44 @@ window.__ModuleLoader__.load({
 		let _deepseek_ai_dsh_client_store = require("@deepseek-ai/dsh-client-store");
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
+		/**
+		* Upper bound. Far above any sane working set, but it exists so a typo (or a
+		* pasted number) cannot silently inflate every request of every session.
+		*/
+		const MAX_INJECTED_MD_TOKENS = 2e4;
+		/** The preset ladder offered by the settings panel, smallest first. */
+		const INJECTED_MD_TOKEN_PRESETS = [
+			300,
+			800,
+			1500
+		];
+		/**
+		* Coerce an arbitrary value into a usable budget.
+		*
+		* Applied on the Host before the value reaches the renderer, so a malformed
+		* settings document (missing field, string, `NaN`, negative) degrades to a
+		* working budget instead of breaking prompt assembly or the Python render.
+		*
+		* "Nothing was provided" (`undefined`, `null`, an empty/blank string) falls back
+		* to the default rather than to the lower bound: a cleared field or an absent
+		* settings key means *unset*, not "the smallest budget allowed". A supplied but
+		* unusable number (`'abc'`, `NaN`, `Infinity`) is likewise treated as unset,
+		* whereas a supplied out-of-range number snaps to the nearest bound, which is
+		* what the panel shows the user.
+		*
+		* @param value - The candidate budget, from settings or the composition entry.
+		* @returns An integer within `[MIN, MAX]`; the default when not provided.
+		*/
+		function clampInjectedMdTokens(value) {
+			if (value === void 0 || value === null) return 800;
+			if (typeof value === "string" && value.trim() === "") return 800;
+			const tokens = Math.trunc(Number(value));
+			if (!Number.isFinite(tokens)) return 800;
+			if (tokens < 100) return 100;
+			if (tokens > 2e4) return MAX_INJECTED_MD_TOKENS;
+			return tokens;
+		}
+		//#endregion
 		//#region src/client/memory-settings-controller.ts
 		/** Unwrap a `WireResult` to its `.value`, throwing on a failed call. */
 		function unwrap(result) {
@@ -28,6 +66,7 @@ window.__ModuleLoader__.load({
 					captureEnabled: true,
 					llmExtractionEnabled: true,
 					contextInjectionEnabled: true,
+					injectedMemoryMdTokens: 800,
 					extractionModel: void 0
 				},
 				data: {
@@ -47,6 +86,7 @@ window.__ModuleLoader__.load({
 				return {
 					hooks: { memorySettings: this.store },
 					setEnabled: (enabled) => this.scope.set("enabled", enabled),
+					setInjectedMemoryMdTokens: (tokens) => this.scope.set("injectedMemoryMdTokens", clampInjectedMdTokens(tokens)),
 					setExtractionModel: (provider, model) => this.scope.set("extractionModel", {
 						provider,
 						model
@@ -254,6 +294,7 @@ window.__ModuleLoader__.load({
 				captureEnabled: value.captureEnabled ?? true,
 				llmExtractionEnabled: value.llmExtractionEnabled ?? true,
 				contextInjectionEnabled: value.contextInjectionEnabled ?? true,
+				injectedMemoryMdTokens: clampInjectedMdTokens(value.injectedMemoryMdTokens),
 				extractionModel: value.extractionModel
 			};
 		}
@@ -263,6 +304,15 @@ window.__ModuleLoader__.load({
 				intro: "管理 dsh-atom-memory 的记忆能力：开关、抽取模型、用户画像、记忆内容与备份恢复。",
 				masterHeader: "记忆开关",
 				masterDesc: "关闭后停用记忆插件：不再捕获、不再注入上下文，记忆工具也会拒绝调用。打开即时恢复。",
+				injectHeader: "注入体积（memory.md）",
+				injectPresetCompact: "精简 · {tokens} tokens",
+				injectPresetStandard: "标准 · {tokens} tokens",
+				injectPresetDetailed: "详尽 · {tokens} tokens",
+				injectCustom: "自定义",
+				injectCustomLabel: "自定义预算（tokens）",
+				injectCustomPlaceholder: "如 1200",
+				injectRange: "可填 {min} – {max}，超范围会自动收敛到边界。",
+				injectHint: "当前 {tokens} tokens。预算越紧，越优先保留最重要且最新的记忆，被舍弃的条目由页脚注明；预算只影响注入系统提示词的那份快照，且仅对之后的新会话生效——已冻结的会话保持原样，以免破坏 KV 缓存。",
 				modelHeader: "LLM 抽取模型",
 				modelFollowDefault: "跟随 dsh 默认模型",
 				modelManual: "手动指定模型",
@@ -328,6 +378,15 @@ window.__ModuleLoader__.load({
 				intro: "Manage dsh-atom-memory: master switch, extraction model, user profile, memory content, and backup/restore.",
 				masterHeader: "Memory switch",
 				masterDesc: "When off the memory plugin is disabled: no capture, no context injection, and memory tools refuse calls. Turning on restores immediately.",
+				injectHeader: "Injected size (memory.md)",
+				injectPresetCompact: "Compact · {tokens} tokens",
+				injectPresetStandard: "Standard · {tokens} tokens",
+				injectPresetDetailed: "Detailed · {tokens} tokens",
+				injectCustom: "Custom",
+				injectCustomLabel: "Custom budget (tokens)",
+				injectCustomPlaceholder: "e.g. 1200",
+				injectRange: "Allowed {min} – {max}; out-of-range values snap to the nearest bound.",
+				injectHint: "Currently {tokens} tokens. The tighter the budget, the more it keeps the most important and most recent memory, with the footer naming what was left out. It only affects the snapshot injected into the system prompt, and only from the next new session — sessions already frozen keep their text, so the KV cache stays valid.",
 				modelHeader: "LLM extraction model",
 				modelFollowDefault: "Follow the dsh default model",
 				modelManual: "Specify a model manually",
@@ -506,6 +565,12 @@ window.__ModuleLoader__.load({
 			editor: "atom-memory-editor",
 			editorRowActions: "atom-memory-editor-row-actions"
 		};
+		/** Locale key of each preset rung shown in the panel. */
+		const PRESET_LABEL_KEYS = {
+			300: "injectPresetCompact",
+			800: "injectPresetStandard",
+			1500: "injectPresetDetailed"
+		};
 		/** Monotonic source of client-side draft-row identities. */
 		let draftSeq = 0;
 		/** @returns a fresh, process-unique draft-row identity. */
@@ -526,7 +591,7 @@ window.__ModuleLoader__.load({
 		* per keystroke) keeps a settings round-trip off the typing path.
 		*/
 		function DraftInput(props) {
-			const { value, placeholder, type, autoComplete, onCommit } = props;
+			const { value, placeholder, type, autoComplete, normalize, onCommit } = props;
 			const [draft, setDraft] = (0, react.useState)(value);
 			/** Read through a ref so the sync effect below needs no extra re-render. */
 			const editingRef = (0, react.useRef)(false);
@@ -544,7 +609,9 @@ window.__ModuleLoader__.load({
 				},
 				onBlur: (e) => {
 					editingRef.current = false;
-					if (e.currentTarget.value !== value) onCommit(e.currentTarget.value);
+					const next = normalize ? normalize(e.currentTarget.value) : e.currentTarget.value;
+					if (next !== e.currentTarget.value) setDraft(next);
+					if (next !== value) onCommit(next);
 				},
 				onKeyDown: (e) => {
 					if (e.key === "Enter") e.currentTarget.blur();
@@ -559,6 +626,9 @@ window.__ModuleLoader__.load({
 			const [modal, setModal] = (0, react.useState)();
 			const [memoryMdBusy, setMemoryMdBusy] = (0, react.useState)(false);
 			const [modelManual, setModelManual] = (0, react.useState)(() => Boolean(state.section.extractionModel?.provider || state.section.extractionModel?.model));
+			/** The committed injection budget (the Host clamps it on the way in). */
+			const tokens = state.section.injectedMemoryMdTokens;
+			const [budgetCustom, setBudgetCustom] = (0, react.useState)(() => !INJECTED_MD_TOKEN_PRESETS.includes(tokens));
 			const openMemoryMd = () => {
 				setModal("memoryMd");
 				if (state.data.memoryMd === void 0) {
@@ -623,6 +693,62 @@ window.__ModuleLoader__.load({
 								}
 							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("masterDesc") })]
 						})]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
+						className: css.block,
+						disabled: !state.available,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("injectHeader") }),
+							INJECTED_MD_TOKEN_PRESETS.map((preset) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+								className: css.radioRow,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									type: "radio",
+									name: "injected-md-budget",
+									checked: !budgetCustom && tokens === preset,
+									onChange: () => {
+										setBudgetCustom(false);
+										props.setInjectedMemoryMdTokens(preset);
+									}
+								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t(PRESET_LABEL_KEYS[preset], { tokens: String(preset) }) })]
+							}, preset)),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+								className: css.radioRow,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									type: "radio",
+									name: "injected-md-budget",
+									checked: budgetCustom,
+									onChange: () => setBudgetCustom(true)
+								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("injectCustom") })]
+							}),
+							budgetCustom && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: css.field,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+										className: css.fieldLabel,
+										children: t("injectCustomLabel")
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DraftInput, {
+										placeholder: t("injectCustomPlaceholder"),
+										value: String(tokens),
+										normalize: (raw) => String(clampInjectedMdTokens(raw)),
+										onCommit: (next) => {
+											props.setInjectedMemoryMdTokens(Number(next));
+										}
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+										className: css.hint,
+										children: t("injectRange", {
+											min: String(100),
+											max: String(2e4)
+										})
+									})
+								]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: css.hint,
+								children: t("injectHint", { tokens: String(tokens) })
+							})
+						]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
 						className: css.block,

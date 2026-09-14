@@ -1,10 +1,11 @@
 """Tests for ``memory.md`` rendering (``memory_md.py``).
 
-Covers both render depths and, above all, the two properties the old
-implementation got wrong: memory types stay distinct instead of collapsing into
-one flat list, and ordering follows a real priority signal rather than plain
-recency (``importance`` is only a signal when the extractor supplied one; the
-neutral default defers to the type's rank).
+Covers both render depths and, above all, the properties the old implementation
+got wrong: memory types stay distinct instead of collapsing into one flat list;
+ordering follows a real priority signal rather than plain recency (``importance``
+is only a signal when the extractor supplied one; the neutral default defers to
+the type's rank); and a tight token budget keeps the **most important and most
+recent** memory rather than gutting whichever section sorts last.
 """
 
 from __future__ import annotations
@@ -13,10 +14,16 @@ import re
 
 from atom_memory.db import connect_for_tests
 from atom_memory.models import NEUTRAL_SCORE
-from atom_memory.memory_md import generate_memory_md
+from atom_memory.memory_md import (
+    _RECENCY_HALF_LIFE_SECONDS,
+    generate_memory_md,
+)
 from atom_memory.retriever import estimate_tokens
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+# Ages are expressed in half-lives so the tests read as "N half-lives staler".
+HALF_LIFE = _RECENCY_HALF_LIFE_SECONDS
 
 
 def _insert_fact(
@@ -272,6 +279,137 @@ def test_tight_budget_shrinks_tail_sections_first():
         assert body.index("决策规则") < body.index("属性")
         assert md.count("- 属性") < 30
         assert estimate_tokens(md) <= 200
+    finally:
+        conn.close()
+
+
+# ---- a tight budget must keep what is important *and* recent -----------------
+
+
+def test_fresh_fact_outranks_a_stale_higher_rank_fact():
+    """近期是一等维度：陈旧的决策规则不再无条件压过最新的事实。
+
+    Importance stays primary for modest age gaps (see the test below); this
+    pins the other end of the trade — after ~8 half-lives of staleness, a fresh
+    fact is worth more to the reader than a durable rule nobody has touched for
+    months, and the render order says so.
+    """
+    conn = connect_for_tests()
+    try:
+        _insert_fact(
+            conn, "d1", "决定", "先回滚再排查",
+            memory_type="decision_rule", created_at=1000,
+        )
+        _insert_fact(
+            conn, "f1", "部署路径", "D:\\dsh",
+            memory_type="semantic", created_at=1000 + 8 * HALF_LIFE,
+        )
+        md = _md(conn)
+        assert md.index("D:\\dsh") < md.index("先回滚再排查")
+    finally:
+        conn.close()
+
+
+def test_modest_staleness_does_not_flip_the_type_rank():
+    """重要度仍是主信号：仅陈旧一倍半衰期不足以让 durable 知识退位。"""
+    conn = connect_for_tests()
+    try:
+        _insert_fact(
+            conn, "d1", "决定", "先回滚再排查",
+            memory_type="decision_rule", created_at=1000,
+        )
+        _insert_fact(
+            conn, "f1", "部署路径", "D:\\dsh",
+            memory_type="semantic", created_at=1000 + HALF_LIFE,
+        )
+        md = _md(conn)
+        assert md.index("先回滚再排查") < md.index("D:\\dsh")
+    finally:
+        conn.close()
+
+
+def test_tight_budget_keeps_the_newest_fact_of_the_tail_section():
+    """预算收紧时最新的一条必须活下来，而不是随所在分组被整段砍掉。
+
+    Regression: the previous trim walked sections from the tail inward and
+    emptied one before touching the next. The 属性 section outranks 事件 by type,
+    so a squeeze used to clear the 事件 section wholesale — even though the event
+    recorded minutes ago scores above every stale attribute. The budget is now
+    spent globally, best score first.
+    """
+    conn = connect_for_tests()
+    try:
+        for index in range(30):
+            _insert_fact(
+                conn, f"a{index}", f"属性{index}", "值" * 10,
+                memory_type="semantic", created_at=1000 + index,
+            )
+        _insert_fact(
+            conn, "e1", "事件", "刚刚完成了插件部署",
+            memory_type="episodic", created_at=1000 + 2 * HALF_LIFE,
+        )
+        md = _md(conn, max_tokens=150)
+
+        assert "刚刚完成了插件部署" in md
+        assert estimate_tokens(md) <= 150
+    finally:
+        conn.close()
+
+
+def test_tight_budget_drops_the_stalest_lines_of_a_kept_section():
+    """同类型事实按新旧取舍：最新的留下，最陈旧的让出预算。"""
+    conn = connect_for_tests()
+    try:
+        for index in range(20):
+            _insert_fact(
+                conn, f"l{index}", "教训", f"教训正文{index}",
+                memory_type="lesson", created_at=1000 + index * HALF_LIFE,
+            )
+        # The whole set costs ~111 tokens, so 100 forces a real trade.
+        md = _md(conn, max_tokens=100)
+
+        # The newest lesson is present, the oldest ones are gone.
+        assert "教训正文19" in md
+        assert "教训正文0" not in md
+        assert "已省略" in md
+        assert estimate_tokens(md) <= 100
+    finally:
+        conn.close()
+
+
+def test_the_newest_survives_at_every_budget_down_to_one_line():
+    """无论预算压到多小，最新的一条都是最后被放弃的。"""
+    conn = connect_for_tests()
+    try:
+        for index in range(20):
+            _insert_fact(
+                conn, f"l{index}", "教训", f"教训正文{index}",
+                memory_type="lesson", created_at=1000 + index * HALF_LIFE,
+            )
+        for budget in (120, 100, 80, 60, 40):
+            md = _md(conn, max_tokens=budget)
+            assert "教训正文19" in md, budget
+            assert estimate_tokens(md) <= budget, budget
+    finally:
+        conn.close()
+
+
+def test_tight_budget_never_leaves_a_section_label_without_content():
+    """紧预算下也不渲染空的分组标签（旧实现同样保证，这里钉住）。"""
+    conn = connect_for_tests()
+    try:
+        _insert_fact(conn, "d1", "决定", "先回滚再排查", memory_type="decision_rule")
+        for index in range(30):
+            _insert_fact(
+                conn, f"a{index}", f"属性{index}", "值" * 10,
+                memory_type="semantic", created_at=1000 + index,
+            )
+        md = _md(conn, max_tokens=100)
+        lines = md.splitlines()
+        titles = ("决策规则", "教训", "流程（SOP）", "流程", "偏好", "属性", "示例", "事件")
+        for index, line in enumerate(lines[:-1]):
+            if line in titles:
+                assert lines[index + 1].startswith("- "), line
     finally:
         conn.close()
 

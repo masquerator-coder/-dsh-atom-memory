@@ -6,6 +6,7 @@
  * @module dsh-atom-memory/config
  */
 import z from '@deepseek-ai/schemastery'
+import { DEFAULT_INJECTED_MD_TOKENS } from './injection-budget.ts'
 
 export interface Config {
   /** Python-side SQLite database path (expanded by the library). */
@@ -57,6 +58,10 @@ export interface Config {
    * injected text is paid for on every request of a session and is rendered at
    * the compact depth, while the tool/settings view returns the full detail
    * list.
+   *
+   * This is only the *seed* for the live value: the settings panel owns it at
+   * runtime (`atom-memory` → `injectedMemoryMdTokens`), and a change there
+   * applies to every session that has not frozen its snapshot yet.
    */
   injectedMemoryMdTokens?: number
   /** Inject a session-start-frozen memory.md snapshot into the system prompt. */
@@ -85,7 +90,7 @@ export const Config: z<Config> = z.object({
   preCompressionCapture: z.boolean().default(true),
   maxRecalledFacts: z.number().default(10),
   memoryMdTokens: z.number().default(1500),
-  injectedMemoryMdTokens: z.number().default(1500),
+  injectedMemoryMdTokens: z.number().default(DEFAULT_INJECTED_MD_TOKENS),
   contextInjectionEnabled: z.boolean().default(true),
   rpcTimeoutMs: z.number().default(30_000),
 })

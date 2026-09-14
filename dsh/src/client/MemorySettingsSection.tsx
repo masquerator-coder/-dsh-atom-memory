@@ -46,9 +46,22 @@ const css = {
 }
 import { LOCALE_NS, type MemorySettingsLocaleKey } from './locales.ts'
 import { ensureMemorySettingsStyle } from './styles.ts'
+import {
+  INJECTED_MD_TOKEN_PRESETS,
+  MAX_INJECTED_MD_TOKENS,
+  MIN_INJECTED_MD_TOKENS,
+  clampInjectedMdTokens,
+} from '../injection-budget.ts'
 import type {
   FactEditRow, MemorySettingsFace, MemorySettingsState, ProfileEditRow,
 } from './memory-settings-controller.ts'
+
+/** Locale key of each preset rung shown in the panel. */
+const PRESET_LABEL_KEYS: Record<(typeof INJECTED_MD_TOKEN_PRESETS)[number], MemorySettingsLocaleKey> = {
+  300: 'injectPresetCompact',
+  800: 'injectPresetStandard',
+  1500: 'injectPresetDetailed',
+}
 
 /** Declare the section's locale dictionary namespace (type-only merge). */
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -111,10 +124,17 @@ function DraftInput(props: {
   placeholder?: string
   type?: 'text' | 'password'
   autoComplete?: string
+  /**
+   * Canonicalise the draft on commit (e.g. clamp a number into range). The
+   * field snaps to the returned text, so an out-of-range or unparsable entry
+   * visibly corrects itself instead of silently disagreeing with the settings
+   * document.
+   */
+  normalize?: (raw: string) => string
   /** Called with the current draft when the edit is done (blur / Enter). */
   onCommit: (value: string) => void
 }) {
-  const { value, placeholder, type, autoComplete, onCommit } = props
+  const { value, placeholder, type, autoComplete, normalize, onCommit } = props
   const [draft, setDraft] = useState(value)
   /** Read through a ref so the sync effect below needs no extra re-render. */
   const editingRef = useRef(false)
@@ -135,7 +155,10 @@ function DraftInput(props: {
       onFocus={() => { editingRef.current = true }}
       onBlur={(e) => {
         editingRef.current = false
-        if (e.currentTarget.value !== value) onCommit(e.currentTarget.value)
+        const next = normalize ? normalize(e.currentTarget.value) : e.currentTarget.value
+        // Show the canonical form even when the commit itself is a no-op.
+        if (next !== e.currentTarget.value) setDraft(next)
+        if (next !== value) onCommit(next)
       }}
       onKeyDown={(e) => {
         // Enter is an explicit "done": blur commits through the same path.
@@ -164,6 +187,16 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   // empty (the user is about to type one).
   const [modelManual, setModelManual] = useState<boolean>(
     () => Boolean(state.section.extractionModel?.provider || state.section.extractionModel?.model),
+  )
+
+  /** The committed injection budget (the Host clamps it on the way in). */
+  const tokens = state.section.injectedMemoryMdTokens
+  // Which preset is active is derived from the value, but a user who picked
+  // "自定义" must stay there even before typing a number — same reasoning as
+  // `modelManual` above. The value itself is read from the settings document, so
+  // this holds no budget state of its own.
+  const [budgetCustom, setBudgetCustom] = useState<boolean>(
+    () => !(INJECTED_MD_TOKEN_PRESETS as readonly number[]).includes(tokens),
   )
 
   const openMemoryMd = (): void => {
@@ -228,7 +261,55 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
         </label>
       </fieldset>
 
-      {/* 2) extraction model */}
+      {/* 2) injected memory.md budget */}
+      <fieldset className={css.block} disabled={!state.available}>
+        <legend>{t('injectHeader')}</legend>
+        {INJECTED_MD_TOKEN_PRESETS.map((preset) => (
+          <label key={preset} className={css.radioRow}>
+            <input
+              type="radio"
+              name="injected-md-budget"
+              checked={!budgetCustom && tokens === preset}
+              onChange={() => {
+                setBudgetCustom(false)
+                void props.setInjectedMemoryMdTokens(preset)
+              }}
+            />
+            <span>{t(PRESET_LABEL_KEYS[preset], { tokens: String(preset) })}</span>
+          </label>
+        ))}
+        <label className={css.radioRow}>
+          <input
+            type="radio"
+            name="injected-md-budget"
+            checked={budgetCustom}
+            onChange={() => setBudgetCustom(true)}
+          />
+          <span>{t('injectCustom')}</span>
+        </label>
+        {budgetCustom && (
+          <div className={css.field}>
+            <label className={css.fieldLabel}>{t('injectCustomLabel')}</label>
+            <DraftInput
+              placeholder={t('injectCustomPlaceholder')}
+              value={String(tokens)}
+              // Clamp on commit and show the canonical number, so an
+              // out-of-range or unparsable entry visibly corrects itself.
+              normalize={(raw) => String(clampInjectedMdTokens(raw))}
+              onCommit={(next) => { void props.setInjectedMemoryMdTokens(Number(next)) }}
+            />
+            <p className={css.hint}>
+              {t('injectRange', {
+                min: String(MIN_INJECTED_MD_TOKENS),
+                max: String(MAX_INJECTED_MD_TOKENS),
+              })}
+            </p>
+          </div>
+        )}
+        <p className={css.hint}>{t('injectHint', { tokens: String(tokens) })}</p>
+      </fieldset>
+
+      {/* 3) extraction model */}
       <fieldset className={css.block} disabled={!state.available}>
         <legend>{t('modelHeader')}</legend>
         <label className={css.radioRow}>
@@ -322,7 +403,7 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
         <p className={css.hint}>{t('modelHint')}</p>
       </fieldset>
 
-      {/* 3) user profile — open an Excel-style modal editor */}
+      {/* 4) user profile — open an Excel-style modal editor */}
       <fieldset className={css.block} disabled={busy}>
         <legend>{t('profileHeader')}</legend>
         {profile.length === 0 ? <p className={css.empty}>{t('profileEmpty')}</p> : null}
@@ -331,7 +412,7 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
         </button>
       </fieldset>
 
-      {/* 4) memory & edit — open an Excel-style modal editor */}
+      {/* 5) memory & edit — open an Excel-style modal editor */}
       <fieldset className={css.block} disabled={busy}>
         <legend>{t('memoryHeader')} · {t('factsHeader')}</legend>
         {facts.length === 0 ? <p className={css.empty}>{t('factsEmpty')}</p> : null}
@@ -340,7 +421,7 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
         </button>
       </fieldset>
 
-      {/* 5) backup / restore */}
+      {/* 6) backup / restore */}
       <fieldset className={css.block} disabled={busy}>
         <legend>{t('backupHeader')}</legend>
         <p className={css.hint}>{t('backupDesc')}</p>

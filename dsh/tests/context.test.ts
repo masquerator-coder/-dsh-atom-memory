@@ -43,7 +43,7 @@ describe('registerMemoryContext', () => {
     const { ctx, sections } = makeCtx()
     registerMemoryContext({
       ctx, bridge: { call: vi.fn() } as any,
-      userScope: 'global', maxTokens: 1500, snapshotEnabled: false,
+      userScope: 'global', resolveMaxTokens: () => 1500, snapshotEnabled: false,
     })
     expect(sections.map(s => s.name)).toEqual(['atom-memory-awareness'])
   })
@@ -55,7 +55,7 @@ describe('registerMemoryContext', () => {
     const { ctx, handlers } = makeCtx()
     registerMemoryContext({
       ctx, bridge: bridge as any,
-      userScope: 'global', maxTokens: 1500, snapshotEnabled: true,
+      userScope: 'global', resolveMaxTokens: () => 1500, snapshotEnabled: true,
     })
     const handler = assembleHandler(handlers)
 
@@ -83,7 +83,7 @@ describe('registerMemoryContext', () => {
     const { ctx, handlers } = makeCtx()
     registerMemoryContext({
       ctx, bridge: bridge as any,
-      userScope: 'global', maxTokens: 1500, snapshotEnabled: true,
+      userScope: 'global', resolveMaxTokens: () => 1500, snapshotEnabled: true,
     })
     const handler = assembleHandler(handlers)
     await handler(assembly(), agentCtx('s1'), next(assembly()))
@@ -102,7 +102,7 @@ describe('registerMemoryContext', () => {
     const { ctx, handlers } = makeCtx()
     registerMemoryContext({
       ctx, bridge: bridge as any,
-      userScope: 'global', maxTokens: 1500, snapshotEnabled: true,
+      userScope: 'global', resolveMaxTokens: () => 1500, snapshotEnabled: true,
     })
     const handler = assembleHandler(handlers)
 
@@ -123,7 +123,7 @@ describe('registerMemoryContext', () => {
     const { ctx, handlers } = makeCtx()
     registerMemoryContext({
       ctx, bridge: bridge as any,
-      userScope: 'global', maxTokens: 1500, snapshotEnabled: true,
+      userScope: 'global', resolveMaxTokens: () => 1500, snapshotEnabled: true,
     })
     const handler = assembleHandler(handlers)
     const result = await handler(assembly(), {} as any, next(assembly()))
@@ -135,8 +135,45 @@ describe('registerMemoryContext', () => {
     const { ctx, handlers } = makeCtx()
     registerMemoryContext({
       ctx, bridge: { call: vi.fn() } as any,
-      userScope: 'global', maxTokens: 1500, snapshotEnabled: false,
+      userScope: 'global', resolveMaxTokens: () => 1500, snapshotEnabled: false,
     })
     expect(handlers).toHaveLength(0)
+  })
+
+  /**
+   * The injected budget is resolved at each freeze, which is what makes the
+   * settings panel's "injected size" control usable: a session that has not
+   * frozen yet picks up the new budget, while an already-frozen session keeps
+   * serving its cached text byte-for-byte (so the prompt prefix — and the
+   * provider's KV cache — is never invalidated mid-session).
+   */
+  it('resolves the budget at each freeze instead of at registration', async () => {
+    let budget = 1500
+    const bridge = {
+      call: vi.fn(async (_method: string, _params: Record<string, unknown>) => '# Memory\n- fact'),
+    }
+    const { ctx, handlers } = makeCtx()
+    registerMemoryContext({
+      ctx, bridge: bridge as any,
+      userScope: 'global', resolveMaxTokens: () => budget, snapshotEnabled: true,
+    })
+    const handler = assembleHandler(handlers)
+
+    await handler(assembly(), agentCtx('s1'), next(assembly()))
+    expect(bridge.call.mock.calls[0]![1]).toMatchObject({ max_tokens: 1500 })
+
+    // The user shrinks the budget in the settings panel.
+    budget = 300
+
+    // The frozen session is untouched: no re-read, same text.
+    const again = await handler(assembly(), agentCtx('s1'), next(assembly()))
+    const text = again.sections.find((s: FakeSection) => s.name === 'atom-memory-snapshot')?.text
+    expect(text).toBeTruthy()
+    expect(bridge.call).toHaveBeenCalledTimes(1)
+
+    // A session that freezes afterwards uses the new budget.
+    await handler(assembly(), agentCtx('s2'), next(assembly()))
+    expect(bridge.call).toHaveBeenCalledTimes(2)
+    expect(bridge.call.mock.calls[1]![1]).toMatchObject({ max_tokens: 300 })
   })
 })

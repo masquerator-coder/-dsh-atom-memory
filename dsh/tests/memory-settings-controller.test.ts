@@ -11,6 +11,11 @@ import {
   MemorySettingsController,
   type MemorySettingsSection,
 } from '../src/client/memory-settings-controller.ts'
+import {
+  DEFAULT_INJECTED_MD_TOKENS,
+  MAX_INJECTED_MD_TOKENS,
+  MIN_INJECTED_MD_TOKENS,
+} from '../src/injection-budget.ts'
 
 function snapshot(over: Partial<SettingsScopeSnapshot<MemorySettingsSection>>): SettingsScopeSnapshot<MemorySettingsSection> {
   return {
@@ -20,6 +25,7 @@ function snapshot(over: Partial<SettingsScopeSnapshot<MemorySettingsSection>>): 
       captureEnabled: true,
       llmExtractionEnabled: true,
       contextInjectionEnabled: true,
+      injectedMemoryMdTokens: DEFAULT_INJECTED_MD_TOKENS,
       extractionModel: undefined,
       ...(over.value as Partial<MemorySettingsSection> | undefined),
     },
@@ -104,6 +110,31 @@ describe('MemorySettingsController', () => {
       provider: 'custom', model: 'gpt-4o-mini',
       baseURL: 'https://api.example.com/v1', protocol: 'openai', apiKey: 'sk-test',
     })
+  })
+
+  it('routes the injection budget through the settings scope, clamped', async () => {
+    const { scope, set } = fakeScope(snapshot({}))
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, [])
+    const face = controller.inject()
+
+    await face.setInjectedMemoryMdTokens(1200)
+    expect(set).toHaveBeenCalledWith('injectedMemoryMdTokens', 1200)
+
+    // The panel may hand over anything a text field produced; the controller is
+    // the last line of defence before the Host (which clamps again).
+    await face.setInjectedMemoryMdTokens(Number.NaN)
+    expect(set).toHaveBeenCalledWith('injectedMemoryMdTokens', DEFAULT_INJECTED_MD_TOKENS)
+    await face.setInjectedMemoryMdTokens(-5)
+    expect(set).toHaveBeenCalledWith('injectedMemoryMdTokens', MIN_INJECTED_MD_TOKENS)
+    await face.setInjectedMemoryMdTokens(9_999_999)
+    expect(set).toHaveBeenCalledWith('injectedMemoryMdTokens', MAX_INJECTED_MD_TOKENS)
+  })
+
+  it('defaults a missing injection budget instead of exposing undefined', () => {
+    const { scope } = fakeScope(snapshot({ value: { injectedMemoryMdTokens: undefined } as never }))
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, [])
+    expect(controller.inject().hooks.memorySettings.getSnapshot().section.injectedMemoryMdTokens)
+      .toBe(DEFAULT_INJECTED_MD_TOKENS)
   })
 
   it('calls the Remote namespace for backup and restore', async () => {

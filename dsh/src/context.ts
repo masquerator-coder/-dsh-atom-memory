@@ -22,6 +22,11 @@
  * retries — whereas a successful read (including a legitimately empty memory) is
  * frozen for good.
  *
+ * The token budget is resolved through a getter at each freeze, so shrinking or
+ * growing the injected view in the settings panel takes effect from the next
+ * session that freezes, without disturbing any session that already has its
+ * text.
+ *
  * @module dsh-atom-memory/context
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -63,8 +68,16 @@ export interface MemoryContextDeps {
   bridge: PythonBridge
   /** Stable user scope whose memory is injected. */
   userScope: string
-  /** Token budget passed to the `memory_md` render. */
-  maxTokens: number
+  /**
+   * Token budget passed to the `memory_md` render, resolved **at each freeze**.
+   *
+   * A getter rather than a value so the settings panel's budget takes effect
+   * without re-registering anything: a session that has not frozen its snapshot
+   * yet picks up the new budget, while an already-frozen session keeps serving
+   * its cached text byte-for-byte (never re-rendered mid-session, which is what
+   * keeps the prompt prefix — and the provider's KV cache — valid).
+   */
+  resolveMaxTokens: () => number
   /** Master switch for snapshot injection (awareness is always registered). */
   snapshotEnabled: boolean
   /** Master-switch gate: when it returns false the snapshot is not injected. */
@@ -79,7 +92,7 @@ export interface MemoryContextDeps {
  * @param deps - Registration dependencies.
  */
 export function registerMemoryContext(deps: MemoryContextDeps): void {
-  const { ctx, bridge, userScope, maxTokens } = deps
+  const { ctx, bridge, userScope } = deps
 
   ctx.systemPrompt.section({
     name: AWARENESS_SECTION,
@@ -107,7 +120,9 @@ export function registerMemoryContext(deps: MemoryContextDeps): void {
     try {
       const raw = await bridge.call<string>('memory_md', {
         user_id: userScope,
-        max_tokens: maxTokens,
+        // Resolved here, at the moment of freezing: a budget changed in the
+        // settings panel applies to every session that has not frozen yet.
+        max_tokens: deps.resolveMaxTokens(),
         // Compact depth: the injected view is grouped by memory type and drops
         // the fact_id UUIDs, which cost more tokens than they carry information
         // for the model. The tool/settings view keeps the detail depth.

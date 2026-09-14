@@ -12,6 +12,10 @@
 
 import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import {
+  DEFAULT_INJECTED_MD_TOKENS,
+  clampInjectedMdTokens,
+} from '../injection-budget.ts'
 
 /** The live settings section this panel edits (mirrors the Host side). */
 export interface MemorySettingsSection {
@@ -19,6 +23,8 @@ export interface MemorySettingsSection {
   captureEnabled: boolean
   llmExtractionEnabled: boolean
   contextInjectionEnabled: boolean
+  /** Estimated-token budget for the memory.md snapshot injected into the prompt. */
+  injectedMemoryMdTokens: number
   extractionModel?: {
     provider?: string
     model?: string
@@ -69,6 +75,13 @@ export interface MemorySettingsFace {
     memorySettings: SnapshotStore<MemorySettingsState>
   }
   setEnabled: (enabled: boolean) => Promise<void>
+  /**
+   * Set the injected memory.md token budget.
+   *
+   * Clamped by the caller (`clampInjectedMdTokens`) before it gets here so the
+   * panel and the Host agree on the bounds; the Host clamps again on the way in.
+   */
+  setInjectedMemoryMdTokens: (tokens: number) => Promise<void>
   setExtractionModel: (provider: string, model: string) => Promise<void>
   /** Write the whole extraction-model override (provider/model/baseURL/protocol/apiKey). */
   setExtractionModelOverride: (override: NonNullable<MemorySettingsSection['extractionModel']>) => Promise<void>
@@ -164,6 +177,7 @@ export class MemorySettingsController {
       captureEnabled: true,
       llmExtractionEnabled: true,
       contextInjectionEnabled: true,
+      injectedMemoryMdTokens: DEFAULT_INJECTED_MD_TOKENS,
       extractionModel: undefined,
     },
     data: { facts: [], profile: [] },
@@ -183,6 +197,8 @@ export class MemorySettingsController {
     return {
       hooks: { memorySettings: this.store },
       setEnabled: (enabled) => this.scope.set('enabled', enabled),
+      setInjectedMemoryMdTokens: (tokens) =>
+        this.scope.set('injectedMemoryMdTokens', clampInjectedMdTokens(tokens)),
       setExtractionModel: (provider, model) =>
         this.scope.set('extractionModel', { provider, model }),
       setExtractionModelOverride: (override) =>
@@ -377,6 +393,7 @@ function defaulted(value: MemorySettingsSection): MemorySettingsSection {
     captureEnabled: value.captureEnabled ?? true,
     llmExtractionEnabled: value.llmExtractionEnabled ?? true,
     contextInjectionEnabled: value.contextInjectionEnabled ?? true,
+    injectedMemoryMdTokens: clampInjectedMdTokens(value.injectedMemoryMdTokens),
     extractionModel: value.extractionModel,
   }
 }

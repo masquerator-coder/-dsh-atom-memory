@@ -13,6 +13,8 @@
  * mutable surface small and auditable.
  */
 
+import { clampInjectedMdTokens } from './injection-budget.ts'
+
 export interface ExtractionModelOverride {
   /** Manual provider id (e.g. `deepseek`) or a free-form label for a custom endpoint. */
   provider?: string
@@ -36,6 +38,16 @@ export interface LiveRuntime {
   llmExtractionEnabled: boolean
   /** Whether the per-session frozen snapshot + awareness are injected. */
   contextInjectionEnabled: boolean
+  /**
+   * Estimated-token budget for the snapshot injected into the system prompt.
+   *
+   * Live rather than apply-time because it is the knob a user actually tunes:
+   * the snapshot is paid for on every request, so its size is the first thing
+   * to want smaller. A change applies to every session that has not yet frozen
+   * its snapshot — sessions already frozen keep their byte-identical text, so
+   * the prompt prefix (and the provider's KV cache) stays valid.
+   */
+  injectedMemoryMdTokens: number
   /** Manual LLM extraction model override; empty provider+model = follow dsh default. */
   extractionModel?: ExtractionModelOverride
 }
@@ -45,13 +57,14 @@ export interface LiveRuntimeSeed extends Partial<Omit<LiveRuntime, 'extractionMo
   extractionModel?: ExtractionModelOverride
 }
 
-/** Resolve a seed into a complete runtime value (defaults applied). */
+/** Resolve a seed into a complete runtime value (defaults applied, budget clamped). */
 export function createRuntime(seed: LiveRuntimeSeed): LiveRuntime {
   return {
     enabled: seed.enabled ?? true,
     captureEnabled: seed.captureEnabled ?? true,
     llmExtractionEnabled: seed.llmExtractionEnabled ?? true,
     contextInjectionEnabled: seed.contextInjectionEnabled ?? true,
+    injectedMemoryMdTokens: clampInjectedMdTokens(seed.injectedMemoryMdTokens),
     extractionModel: seed.extractionModel,
   }
 }
@@ -82,7 +95,11 @@ export class Runtime {
       this.value.captureEnabled !== next.captureEnabled ||
       this.value.llmExtractionEnabled !== next.llmExtractionEnabled ||
       this.value.contextInjectionEnabled !== next.contextInjectionEnabled
-    this.value = { ...next }
+    // The injection budget is deliberately *not* part of `changed`: nothing
+    // subscribes to re-wire it. It is read at each snapshot freeze (see
+    // context.ts), which is exactly the moment a larger/smaller budget should
+    // take effect, so no notification is needed.
+    this.value = { ...next, injectedMemoryMdTokens: clampInjectedMdTokens(next.injectedMemoryMdTokens) }
     if (changed) {
       for (const listener of this.listeners) listener()
     }

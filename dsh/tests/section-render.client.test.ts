@@ -90,17 +90,18 @@ function bind(controller: MemorySettingsController) {
     if (!params) return tmpl
     return tmpl.replace(/\{(\w+)\}/g, (_s, k) => String((params as Record<string, unknown>)[k]))
   }
+  // Forward the face verbatim, mirroring the renderer's InjectFace contract
+  // (hooks -> use<Name>, every other member -> a prop of the same name).
+  // Spreading instead of hand-listing the members matters: a hand-written list
+  // silently goes stale whenever a new face action is added, and the resulting
+  // prop is `undefined` at the call site.
+  const { hooks: _hooks, ...actions } = face
   const props = {
+    ...actions,
     t: t as never,
     useMemorySettings: useMemorySettings as never,
-    setEnabled: async () => {}, refreshData: face.refreshData,
-    setExtractionModel: face.setExtractionModel,
-    setExtractionModelOverride: face.setExtractionModelOverride,
-    saveFact: face.saveFact, deleteFact: face.deleteFact,
-    upsertProfile: face.upsertProfile, deleteProfile: face.deleteProfile,
-    fetchMemoryMd: face.fetchMemoryMd,
-    saveAllFacts: face.saveAllFacts, saveAllProfile: face.saveAllProfile,
-    backup: face.backup, restore: face.restore,
+    // Provided by the slot runtime (PropsRuntime<'settings.section'>), not by
+    // the injected face.
     close: () => {},
   }
   return { face, props }
@@ -143,6 +144,17 @@ function spyModelWrites(props: { setExtractionModelOverride: unknown }): Array<R
     await real(override)
   }) as never
   return commits
+}
+
+/** Record every injection-budget write while still applying it for real. */
+function spyBudgetWrites(props: { setInjectedMemoryMdTokens: unknown }): number[] {
+  const writes: number[] = []
+  const real = props.setInjectedMemoryMdTokens as (tokens: number) => Promise<void>
+  props.setInjectedMemoryMdTokens = (async (tokens: number) => {
+    writes.push(tokens)
+    await real(tokens)
+  }) as never
+  return writes
 }
 
 describe('MemorySettingsSection client render', () => {
@@ -269,6 +281,71 @@ describe('MemorySettingsSection client render', () => {
         await typeInto(input, 'XYZ')
       }
     }
+  })
+
+  it('shows the injected-size presets with the configured budget selected', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    // The default budget is one of the preset rungs, so its radio is checked and
+    // no custom field is offered yet.
+    const standard = screen.getByLabelText('标准 · 800 tokens') as HTMLInputElement
+    expect(standard.checked).toBe(true)
+    expect((screen.getByLabelText('精简 · 300 tokens') as HTMLInputElement).checked).toBe(false)
+    expect(screen.queryByPlaceholderText('如 1200')).toBeNull()
+    expect(screen.getByText(/当前 800 tokens/)).toBeTruthy()
+  })
+
+  it('writes a preset budget through the settings scope', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    const writes = spyBudgetWrites(props)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('精简 · 300 tokens'))
+    })
+    expect(writes).toEqual([300])
+    // The value round-trips through the scope, so the radio follows it.
+    expect((screen.getByLabelText('精简 · 300 tokens') as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByText(/当前 300 tokens/)).toBeTruthy()
+  })
+
+  it('clamps a custom budget on commit and shows the canonical number', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    const writes = spyBudgetWrites(props)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('自定义'))
+    })
+    const field = screen.getByPlaceholderText('如 1200') as HTMLInputElement
+
+    // In range: committed verbatim, and the field keeps the value.
+    await act(async () => {
+      fireEvent.change(field, { target: { value: '' } })
+    })
+    await typeInto(field, '1200')
+    await act(async () => { field.blur() })
+    expect(writes).toEqual([1200])
+    expect(field.value).toBe('1200')
+
+    // Out of range and unparsable values snap to something usable instead of
+    // reaching the Host as NaN/negative (the Host clamps again as a backstop).
+    for (const typed of ['9', 'abc']) {
+      await act(async () => { field.focus() })
+      await act(async () => {
+        fireEvent.change(field, { target: { value: typed } })
+      })
+      await act(async () => { field.blur() })
+    }
+    expect(writes).toEqual([1200, 100, 800])
+    expect(field.value).toBe('800')
   })
 
   it('reveals the manual-model parameters (base URL / protocol / API key) when manual is selected', async () => {

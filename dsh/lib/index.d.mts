@@ -51,6 +51,10 @@ interface Config {
    * injected text is paid for on every request of a session and is rendered at
    * the compact depth, while the tool/settings view returns the full detail
    * list.
+   *
+   * This is only the *seed* for the live value: the settings panel owns it at
+   * runtime (`atom-memory` → `injectedMemoryMdTokens`), and a change there
+   * applies to every session that has not frozen its snapshot yet.
    */
   injectedMemoryMdTokens?: number;
   /** Inject a session-start-frozen memory.md snapshot into the system prompt. */

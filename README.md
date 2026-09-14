@@ -135,8 +135,8 @@ from one implementation (`memory_md.generate_memory_md`):
 
 | Depth | Used by | Shape |
 | --- | --- | --- |
-| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** and the settings **"view memory.md" dialog** | Facts grouped by memory type, ordered by priority; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; long knowledge bodies truncated to 80 chars; no document title. |
-| `detail=True` (detail) | the `memory_memory_md` tool | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line. |
+| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** and the settings **"view memory.md" dialog** | Facts grouped by memory type, ordered by a blend of importance and recency; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; long knowledge bodies truncated to 80 chars; no document title. |
+| `detail=True` (detail) | the `memory_memory_md` tool | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line (truncated to 120 chars); the header line is not truncated. |
 
 Both read paths that a human inspects are therefore *the model's own view*: the
 dialog asks for the compact depth so the panel cannot drift from what the
@@ -144,23 +144,39 @@ prompt carries. The only reason to render `detail=True` is to obtain a
 `fact_id` for locating a fact — which is precisely what the
 `memory_memory_md` tool is for, so the dialog does not need it.
 
-Ordering is **priority first**, not recency. `importance` is only treated as a
+Ordering blends **importance and recency** into one score, rather than ranking by
+importance with recency only as a tie-break. `importance` is only treated as a
 signal when the extractor actually supplied one: the neutral default of `0.5`
 means "unknown" and falls back to the fact's type rank
 (`models.TYPE_IMPORTANCE` — `decision_rule` 0.90, `lesson` 0.85, `sop` 0.80,
 `procedural` 0.70, `semantic` 0.60, `episodic`/`few_shot` 0.50). Without that
 fallback every fact ties at 0.5 and the order degenerates to plain recency,
 which is exactly what made the injected view a flat, undifferentiated list.
-Sections are ordered by the rank of their **best** fact, so a genuinely
-important attribute can outrank a section of minor rules.
+Recency is a real second dimension — weight 0.3 against importance's 0.7, with a
+14-day half-life measured *relative to the newest fact in the set*, so the
+ranking stays deterministic and clock-independent — because the score is also
+what decides what a tight budget keeps. Ranking by importance alone would always
+sacrifice the newest material: a fact recorded minutes ago would lose to durable
+knowledge from months back. Sections are ordered by the score of their **best**
+fact, so a genuinely important (or genuinely fresh) attribute can outrank a
+section of stale minor rules.
 
-Nothing is dropped while the render fits. On overflow the lowest-priority
-sections shrink first — pruning walks from the tail inwards, so events go before
-rules — and a section that loses every line loses its label too, so no bare
-`### 流程` stub survives. The footer reports both the kept count per type and
-what was hidden, so a trimmed view still says *which kinds* of memory exist.
-The footer is charged against the same token budget, and the rendered artifact
-(not just its body) is guaranteed to fit it.
+Nothing is dropped while the render fits. On overflow the artifact is shrunk one
+line at a time, always giving up the **globally lowest-scoring** line still
+present, and a section that loses every line loses its label too, so no bare
+`流程` stub survives. Giving up lines globally — instead of emptying whole
+sections from the tail inwards — is what makes a small budget keep "the most
+important and most recent memory" rather than whatever happens to live in the
+first sections. The footer reports both the kept count per type and what was
+hidden, so a trimmed view still says *which kinds* of memory exist. The fit is
+measured on the **assembled artifact** (body + that very footer), so the token
+budget is a hard cap on what is actually returned.
+
+The budget for the injected snapshot is user-configurable in the dsh settings
+panel (**注入体积**: presets 300 / 800 / 1500 tokens, or a custom value in
+100–20000) and defaults to 800. It is resolved when a session freezes its
+snapshot, so a change applies to every session that has not frozen yet, while
+already-frozen sessions keep their byte-identical text and their KV cache.
 
 `fact_id` is deliberately absent from the compact depth: 19 UUIDs cost roughly
 700 tokens, more than they carry information for the model, while every fact

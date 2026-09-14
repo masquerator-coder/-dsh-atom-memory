@@ -20,6 +20,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { Config, type Config as ConfigShape } from './config.ts'
+import {
+  DEFAULT_INJECTED_MD_TOKENS,
+  clampInjectedMdTokens,
+} from './injection-budget.ts'
 import { PythonBridge, defaultSpawn } from './bridge.ts'
 import { registerMemoryTools } from './tools.ts'
 import { registerMemoryContext } from './context.ts'
@@ -64,6 +68,7 @@ function seedRuntime(config: ConfigShape): LiveRuntime {
     captureEnabled: config.captureEnabled !== false,
     llmExtractionEnabled: config.llmExtractionEnabled !== false,
     contextInjectionEnabled: config.contextInjectionEnabled !== false,
+    injectedMemoryMdTokens: config.injectedMemoryMdTokens,
     extractionModel: config.extractionModel,
   })
 }
@@ -194,11 +199,16 @@ export function apply(ctx: Context, config: ConfigShape): void {
   // depth: it is paid for on every request and is the view that must stay short
   // and priority-ordered, unlike the full list the `memory_memory_md` tool and
   // the settings modal return.
+  //
+  // The budget is passed as a *getter*, not a value: the settings panel owns it
+  // at runtime, and resolving it at each freeze is what lets a change apply to
+  // sessions that have not frozen yet while leaving already-frozen sessions
+  // (and their KV cache) untouched.
   registerMemoryContext({
     ctx,
     bridge,
     userScope: FALLBACK_SCOPE,
-    maxTokens: config.injectedMemoryMdTokens ?? 1500,
+    resolveMaxTokens: () => clampInjectedMdTokens(runtime.get().injectedMemoryMdTokens),
     snapshotEnabled: runtime.get().contextInjectionEnabled,
     isEnabled: () => runtime.isEnabled(),
   })
@@ -247,6 +257,7 @@ const LiveSettingsSchema: z<LiveRuntime> = z.object({
   captureEnabled: z.boolean().default(true),
   llmExtractionEnabled: z.boolean().default(true),
   contextInjectionEnabled: z.boolean().default(true),
+  injectedMemoryMdTokens: z.number().default(DEFAULT_INJECTED_MD_TOKENS),
   extractionModel: z.object({
     provider: z.string().default(''),
     model: z.string().default(''),

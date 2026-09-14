@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+### Added (第七轮：可配置的注入体积 + 预算收紧时的取舍保证)
+- **设置面板新增「注入体积（memory.md）」**：档位 radio（精简 **300** / 标准 **800** /
+  详尽 **1500** tokens）+「自定义」（100–20000，越界自动收敛并在输入框里显示收敛后的值）。
+  默认值由 1500 改为 **800**（`config.ts` 与 `LiveSettingsSchema` 一致）。
+  - 走线：`settings<atom-memory>.injectedMemoryMdTokens` → host `Runtime` →
+    `context.ts` **在冻结快照那一刻**求值（`resolveMaxTokens` getter，取代原先 apply 期
+    烘焙的定值）。因此**只对之后的新会话生效**：已冻结的会话继续返回逐字节相同的文本，
+    系统提示词前缀与 KV 缓存都不受影响。面板上的 hint 明写了这一点。
+  - 边界与默认值集中在新的 `src/injection-budget.ts`，host 与浏览器两半共用同一份，
+    避免两侧各写一套而漂移；host 侧 `createRuntime`/`Runtime.set`/`context` 三处都会收敛，
+    非法或缺省的设置值（`undefined`/`null`/空串/`NaN`）回落到默认值而**不是**下界。
+- **「预算调小时必须保留最重要且近期的记忆」——这条原先并不成立，本轮修掉**：
+  - **根因一（排序）**：`_sort_key` 是 `(-rank, -created_at, fact_id)`，即重要度优先、
+    **近期只作同级 tie-break**。一条刚发生的事永远排在几个月前的 durable 知识之后。
+    现在改为**混合评分** `0.7 × 重要度 + 0.3 × 近期分`，近期分以
+    `0.5 ** (相对最新一条的年龄 / 14 天)` 计算（`_RECENCY_HALF_LIFE_SECONDS`）——
+    用**相对**年龄而非墙钟，排序因此确定、不依赖系统时间、测试不会抖。
+  - **根因二（裁剪粒度）**：旧 `_trim` **按分组从尾部整段砍**，会先把「事件」这类
+    低 rank 分组清空，再去动高分组的行——于是刚刚记录的事实仅仅因为落在排序最末的分组里
+    就被丢掉。现在改为**全局**从分值最低的行开始放弃，逐行收缩到放得下为止。
+  - **根因三（预算核算，本轮自查发现并修掉）**：`estimate_tokens` 对**每次调用**按
+    `非 CJK 字符数 // 5` 取整，所以拼接后的实际开销**大于**分行测量之和；原先「预留
+    footer 固定额度、把 body 填到预算边缘」的做法会静默越界，触发兜底后**整份视图塌成
+    一行「全部省略」提示**（真实库 1500 预算实测就是这样）。现在直接对**最终产物**
+    （body + 本次选择自己产生的 footer）测量并逐行收缩，硬上限由构造保证。
+  - **真实库验证**（95 条 active 事实）：300 → 283 tokens / 6 条；800 → 782 / 22 条；
+    1500 → 1475 / 46 条；3000 → 2506 / 全部 95 条，页脚均注明省略条数与被隐藏的分组。
+  - **测试**：新增 5 例，其中 3 例是这条要求的判据，**在旧渲染器下全红、新渲染器下全绿**
+    （已用 `git checkout` 回退旧文件实测确认）：`test_fresh_fact_outranks_a_stale_higher_rank_fact`、
+    `test_tight_budget_keeps_the_newest_fact_of_the_tail_section`、
+    `test_the_newest_survives_at_every_budget_down_to_one_line`；另加
+    `test_modest_staleness_does_not_flip_the_type_rank`（钉住重要度仍是主信号，
+    仅陈旧一个半衰期不足以让 durable 知识退位）与紧预算下不出现空分组标签。
+    `pytest` 全量（排除本机环境不可跑的 test_db/test_integration/test_rpc）
+    **134 passed / 1 skipped**；`vitest` 12 文件 **103 例**全绿；`tsc --noEmit`
+    （含 `tsconfig.client.json`）干净。
+- **顺带修掉的测试基建缺陷**：`section-render.client.test.ts` 的 `bind()` 原先**手写列举**
+  转发给组件的 face 成员，本轮新增 `setInjectedMemoryMdTokens` 时它就静默缺失，导致
+  spy 的 `real` 为 `undefined`、写入根本没到 scope。现在改为解构 `hooks` 后
+  **整体展开**其余成员（这才是 `InjectFace` 的契约），新增动作不会再漏。
+  另一处：该文件的 settings scope 桩早已换成真实内存 store，本轮沿用。
+- `DraftInput` 增加可选 `normalize`：提交时把值规范化并**回显**规范化结果，
+  因此越界或无法解析的输入会可见地自我纠正，而不是静默地与设置文档不一致。
+
 ### Fixed (第六轮：画像编辑每输入一个字符就失去焦点)
 - **现象**：设置界面「编辑画像」弹窗里，在「分组 / 键 / 值」任一单元格输入时，
   每敲一个字符输入框就失焦，无法连续输入（只能一次一个字符、且需重新点击）。

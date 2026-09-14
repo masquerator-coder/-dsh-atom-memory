@@ -12,11 +12,25 @@ two depths from one implementation:
 - **detail** (``detail=True``) — the full list, one bullet per fact with its
   ``fact_id``, used by the ``memory_memory_md`` tool and the settings modal.
 
-Ordering is *priority first*: a fact's ``importance`` only counts when the
-extractor actually supplied a signal; the neutral default (:data:`NEUTRAL_SCORE`)
-means "unknown" and falls back to the type's default rank
+Ordering blends **importance and recency** into one score (see
+:func:`_blend`): a fact's ``importance`` only counts when the extractor actually
+supplied a signal; the neutral default (:data:`NEUTRAL_SCORE`) means "unknown"
+and falls back to the type's default rank
 (:func:`~atom_memory.models.default_importance`). Without that fallback every
 fact ties at 0.5 and the order degenerates to plain recency.
+
+Recency is a real dimension rather than a tie-break, because a memory view is
+read at whatever budget the user configured: when the budget is tight, whatever
+the ordering puts last is what gets dropped. Ranking by importance alone would
+therefore always sacrifice the newest material — a fact recorded minutes ago
+would lose to durable knowledge from months back — which is exactly the wrong
+trade for "what is going on right now". The blend keeps importance primary
+while letting a sufficiently fresh fact outrank a stale one.
+
+The budget is spent **globally best-first** (:func:`_select`), not
+section-by-section: trimming a whole low-priority section before touching any
+line of a high-priority one would discard a top-scoring fresh fact merely
+because it lives in the section that sorts last.
 """
 
 from __future__ import annotations
@@ -42,6 +56,26 @@ _COMPACT_CONTENT_CHARS = 80
 
 # Maximum characters of a knowledge body rendered in detail mode.
 _DETAIL_CONTENT_CHARS = 120
+
+# -- ranking ------------------------------------------------------------------
+#
+# One score per fact decides both the render order and (through it) what a tight
+# token budget keeps. The two weights are deliberately explicit module constants
+# rather than magic numbers inline: they are the one knob that trades "durable
+# knowledge stays" against "what just happened gets in".
+#
+# Importance is primary (0.7) because the type defaults already encode what stays
+# valuable longest; recency (0.3) is strong enough to promote a fresh fact past
+# materially staler material without letting recency alone decide the view.
+_IMPORTANCE_WEIGHT = 0.7
+_RECENCY_WEIGHT = 0.3
+
+# Age at which a fact's recency credit halves. Age is measured *relative to the
+# newest fact in the set* rather than against the wall clock, so the ranking is
+# deterministic (no clock dependency, no test flakiness) and still means what it
+# should: "the newest thing I know" always gets full recency credit, and
+# everything else is discounted by how much older it is than that.
+_RECENCY_HALF_LIFE_SECONDS = 14 * 24 * 60 * 60
 
 # Section titles in rendering order. Sections present in the data always render
 # (even when a budget only allows a heading), so the reader can see *which kinds*
@@ -159,19 +193,47 @@ def _has_signal(value: float) -> bool:
     return abs(float(value) - NEUTRAL_SCORE) > 1e-9
 
 
+def _recency_score(created_at: int, newest_created_at: int) -> float:
+    """Return the 0..1 recency credit of a fact, newest-first.
+
+    Args:
+        created_at: The fact's creation timestamp.
+        newest_created_at: The newest timestamp in the same fact set.
+
+    Returns:
+        ``1.0`` for the newest fact, halving per
+        :data:`_RECENCY_HALF_LIFE_SECONDS` of age relative to it.
+    """
+    age = max(0, int(newest_created_at) - int(created_at))
+    return 0.5 ** (age / _RECENCY_HALF_LIFE_SECONDS)
+
+
+def _blend(rank: float, recency: float) -> float:
+    """Combine importance and recency into the single ranking score.
+
+    Args:
+        rank: The fact's importance signal (stated, else its type default).
+        recency: The fact's recency credit from :func:`_recency_score`.
+
+    Returns:
+        The blended 0..1 score used for ordering and budget allocation.
+    """
+    return _IMPORTANCE_WEIGHT * rank + _RECENCY_WEIGHT * recency
+
+
 def _sort_key(fact: dict) -> tuple:
-    """Rank facts by priority, then recency, then a stable id tiebreak."""
-    return (-fact["rank"], -int(fact["created_at"]), str(fact["fact_id"]))
+    """Rank facts by blended score, then recency, then a stable id tiebreak."""
+    return (-fact["score"], -int(fact["created_at"]), str(fact["fact_id"]))
 
 
 def _collect(conn: sqlite3.Connection, user_id: str) -> dict:
-    """Bucket a user's active facts by rendered section, priority-sorted.
+    """Bucket a user's active facts by rendered section, score-sorted.
 
-    Sections are ordered by the priority of their **best** fact, not by a fixed
-    type list: a stated, high-importance fact must be able to outrank a whole
-    section of lower-priority ones, otherwise "top of the view" would mean
-    "luckiest type" rather than "most important". ``_SECTION_ORDER`` only breaks
-    ties between sections whose best facts rank equally.
+    Sections are ordered by the blended score of their **best** fact, not by a
+    fixed type list: a fresh, high-importance fact must be able to outrank a
+    whole section of staler ones, otherwise "top of the view" would mean
+    "luckiest type" rather than "most worth reading now". ``_SECTION_ORDER`` only
+    breaks ties between sections whose best facts score equally.
 
     Returns:
         An ordered mapping ``section -> [fact, ...]``. Empty when the user has
@@ -180,6 +242,10 @@ def _collect(conn: sqlite3.Connection, user_id: str) -> dict:
     facts = _load_active_facts(conn, user_id)
     if not facts:
         return {}
+
+    newest = max(int(fact["created_at"]) for fact in facts)
+    for fact in facts:
+        fact["score"] = _blend(fact["rank"], _recency_score(fact["created_at"], newest))
 
     grouped: dict = {}
     for fact in facts:
@@ -190,7 +256,7 @@ def _collect(conn: sqlite3.Connection, user_id: str) -> dict:
     ranked = sorted(
         grouped.items(),
         key=lambda item: (
-            -max(fact["rank"] for fact in item[1]),
+            -max(fact["score"] for fact in item[1]),
             _SECTION_ORDER.index(item[0]),
         ),
     )
@@ -231,27 +297,17 @@ def _render_compact(buckets: dict, max_tokens: int) -> str:
     honest answer, because returning empty text would be indistinguishable from
     a failed read at the injection site.
     """
-    lines: List[str] = []
-    sections: dict = {}  # section title -> its rendered content lines
-
+    sections: dict = {}  # section title -> [(line, score), ...] in render order
     for section, facts in buckets.items():
         if not facts:
             continue
         rendered = _render_section_lines(section, facts)
         if not rendered:
             continue
-        title = _SECTION_TITLES[section]
-        sections[title] = rendered
-        lines.append(title)
-        lines.extend(rendered)
+        sections[_SECTION_TITLES[section]] = rendered
 
-    total = sum(len(body) for body in sections.values())
-    trimmed = _trim(lines, list(sections.values()), max_tokens - _reserve(sections))
-
-    kept = _kept_counts(trimmed.lines, sections, trimmed.hidden)
-    footer = _render_footer(trimmed.omitted, trimmed.hidden, kept)
-    body = "\n".join(trimmed.lines)
-    rendered = body + "\n\n" + footer if body else footer
+    total = sum(len(lines) for lines in sections.values())
+    rendered = _compose(sections, _select(sections, max_tokens))
     if estimate_tokens(rendered) <= max_tokens:
         return rendered
     # The budget is smaller than even the empty digest + footer costs. Nothing
@@ -259,23 +315,6 @@ def _render_compact(buckets: dict, max_tokens: int) -> str:
     # than silently overshooting the caller's cap.
     return f"> {total} 条记忆已省略（预算不足，请用 memory_recall 检索）"
 
-
-def _reserve(sections: dict) -> int:
-    """Tokens to hold back so the footer always fits inside the budget.
-
-    The footer is part of the artifact, so it is charged against the budget. It
-    is reserved in its *widest* form — every section hidden, which includes the
-    "已省略" clause naming them — because whether lines get dropped is exactly
-    what is being decided; reserving the optimistic footer would let the dropped
-    case overshoot the cap.
-
-    Args:
-        sections: ``section title -> rendered content lines``.
-
-    Returns:
-        The token estimate to subtract from the caller's budget.
-    """
-    return estimate_tokens(_render_footer(0, list(sections), {}))
 
 def _render_footer(omitted: int, hidden: List[str], kept: dict) -> str:
     """Render the digest footer: what is kept, and what was left out.
@@ -301,85 +340,68 @@ def _render_footer(omitted: int, hidden: List[str], kept: dict) -> str:
     return "\n".join(lines)
 
 
-def _kept_counts(
-    lines: List[str],
-    sections: dict,
-    hidden: List[str],
-) -> dict:
-    """Count the lines that survived the trim, per section.
+def _render_section_lines(section: str, facts: List[dict]) -> List[Tuple[str, float]]:
+    """Render one section's facts to scored bullet lines, highest score first.
 
-    A section is reported only when at least one of its lines survived, so the
-    footer never advertises a group the reader cannot see.
-
-    Args:
-        lines: The surviving render, section labels interleaved.
-        sections: ``section title -> rendered content lines``, in render order.
-        hidden: Titles of the sections that lost every line.
-
-    Returns:
-        An ordered ``section title -> kept line count`` mapping.
-    """
-    present = set(lines)
-    counts: dict = {}
-    for title, body in sections.items():
-        if title in hidden:
-            continue
-        alive = sum(1 for line in dict.fromkeys(body) if line in present)
-        if alive:
-            counts[title] = alive
-    return counts
-
-
-def _render_section_lines(section: str, facts: List[dict]) -> List[str]:
-    """Render one section's facts to bullet lines, highest priority first.
-
-    Preference and attribute facts are already folded into one dense line per
-    value group (see :func:`_fold_preferences` / :func:`_attribute_lines`), so
-    they cost far less per fact than a bullet each.
+    Each line carries the blended score of its best contributing fact, because
+    that score is what decides whether the line survives a tight budget. Folded
+    lines (see :func:`_fold_preferences` / :func:`_attribute_lines`) therefore
+    inherit their strongest member's score: a line is worth as much as the best
+    thing it stands for.
     """
     if section == "preference":
-        return [f"- {line}" for line in _fold_preferences(facts)]
+        return [(f"- {line}", score) for line, score in _fold_preferences(facts)]
     if section == "attribute":
-        return [f"- {line}" for line in _attribute_lines(facts)]
-    return [_render_fact_line(section, fact) for fact in facts]
+        return [(f"- {line}", score) for line, score in _attribute_lines(facts)]
+    return [(_render_fact_line(section, fact), fact["score"]) for fact in facts]
 
 
-def _fold_preferences(facts: List[dict]) -> List[str]:
+def _fold_preferences(facts: List[dict]) -> List[Tuple[str, float]]:
     """Fold multi-valued preferences into one ``- X（喜欢）`` line per polarity."""
     liked: List[str] = []
     disliked: List[str] = []
+    liked_score = 0.0
+    disliked_score = 0.0
     for fact in facts:
         value = str(fact["object"])
         if value in liked or value in disliked:
             continue
-        (disliked if _negated(fact.get("qualifiers")) else liked).append(value)
+        if _negated(fact.get("qualifiers")):
+            disliked.append(value)
+            disliked_score = max(disliked_score, fact["score"])
+        else:
+            liked.append(value)
+            liked_score = max(liked_score, fact["score"])
 
-    lines: List[str] = []
+    lines: List[Tuple[str, float]] = []
     if liked:
-        lines.append("、".join(liked))
+        lines.append(("、".join(liked), liked_score))
     if disliked:
-        lines.append("、".join(disliked) + "（不喜欢）")
+        lines.append(("、".join(disliked) + "（不喜欢）", disliked_score))
     return lines
 
 
-def _attribute_lines(facts: List[dict]) -> List[str]:
+def _attribute_lines(facts: List[dict]) -> List[Tuple[str, float]]:
     """Render single-valued attributes as ``predicate: value`` one-liners.
 
-    Several values for the same predicate are merged into one line in
-    priority order, so a mistyped or re-stated attribute does not burn a whole
+    Several values for the same predicate are merged into one line in score
+    order, so a mistyped or re-stated attribute does not burn a whole
     token budget line on its own.
     """
     merged: dict = {}
+    scores: dict = {}
     for fact in facts:
-        merged.setdefault(fact["predicate"], []).append(str(fact["object"]))
+        predicate = fact["predicate"]
+        merged.setdefault(predicate, []).append(str(fact["object"]))
+        scores[predicate] = max(scores.get(predicate, 0.0), fact["score"])
 
-    lines: List[str] = []
+    lines: List[Tuple[str, float]] = []
     for predicate, values in merged.items():
         unique: List[str] = []
         for value in values:
             if value not in unique:
                 unique.append(value)
-        lines.append(f"{predicate}: {'、'.join(unique)}")
+        lines.append((f"{predicate}: {'、'.join(unique)}", scores[predicate]))
     return lines
 
 
@@ -412,96 +434,97 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit] + "…"
 
 
-@dataclass(frozen=True)
-class _TrimReport:
-    """What the token-budget trim did to the compact render.
-
-    Attributes:
-        lines: The surviving lines, headings interleaved.
-        omitted: How many content lines were dropped.
-        hidden: Titles of the sections that lost every line (heading included),
-            so the footer can name what the reader is not seeing.
-    """
-
-    lines: List[str]
-    omitted: int
-    hidden: List[str]
-
-
-def _trim(
-    lines: List[str],
-    bodies: List[List[str]],
-    max_tokens: int,
-) -> _TrimReport:
-    """Shrink the lowest-priority sections until the budget is met.
+def _select(sections: dict, max_tokens: int) -> dict:
+    """Choose the lines a token budget can hold, globally best-scoring first.
 
     Nothing is dropped while the render fits — the dense preference/attribute
     folds are cheap and the whole point of this view is a complete picture.
-    On overflow, sections are shrunk from the tail inward (events first) and,
-    within a section, lowest priority first. A section that loses *every* line
-    loses its label too, so no bare ``流程`` stub is ever rendered, and its title
-    is reported back as hidden so the footer can say what is missing.
+
+    On overflow the artifact is shrunk one line at a time, always giving up the
+    **globally lowest-scoring** line still present, until it fits. Two properties
+    follow, and both matter:
+
+    * The surviving set is "the most important and most recent memory" at *any*
+      budget. The previous implementation instead emptied one section after
+      another from the tail, so a top-scoring fact recorded minutes ago could be
+      thrown away purely because it lived in the section that sorts last.
+    * The budget is measured on the **assembled artifact** — the body plus the
+      footer that this very selection produces — never on an estimate of its
+      parts. ``estimate_tokens`` counts non-CJK characters in blocks of five per
+      call, so a joined text costs *more* than the sum of its lines' costs:
+      budgeting the body against a pre-subtracted footer reserve silently
+      overshoots and collapses the whole render to the "omitted" notice.
+
+    A section that loses *every* line loses its label too (labels are part of the
+    artifact being measured), so no bare ``流程`` stub is rendered.
 
     Args:
-        lines: The flattened render (section labels interleaved).
-        bodies: The rendered content of each section, in render order.
-        max_tokens: The body token budget (the footer is reserved separately).
+        sections: ``section title -> [(line, score), ...]`` in render order.
+        max_tokens: The budget for the complete rendered artifact.
 
     Returns:
-        The :class:`_TrimReport` describing the result.
+        ``section title -> surviving line indices`` (ascending). Sections that
+        kept nothing are absent; :func:`_compose` derives everything else
+        (footer counts, hidden sections) from this one mapping, so there is a
+        single source of truth for what was kept.
     """
-    if estimate_tokens("\n".join(lines)) <= max_tokens:
-        return _TrimReport(lines=list(lines), omitted=0, hidden=[])
+    titles = list(sections)
+    kept: dict = {title: list(range(len(lines))) for title, lines in sections.items()}
 
-    omitted = 0
-    hidden: List[str] = []
-    pruned = list(lines)
-    label_of = _label_lookup(lines, bodies)
-    # Walk from the tail: each section is shrinkable until it is empty.
-    for index in range(len(bodies) - 1, -1, -1):
-        if estimate_tokens("\n".join(pruned)) <= max_tokens:
+    # Lowest score first: the order in which material is given up. Ties resolve
+    # against render order so the outcome is deterministic.
+    give_up = [
+        (score, order_index, line_index)
+        for order_index, lines in enumerate(sections.values())
+        for line_index, (_line, score) in enumerate(lines)
+    ]
+    give_up.sort(key=lambda item: (item[0], -item[1], -item[2]))
+
+    for _score, order_index, line_index in give_up:
+        if estimate_tokens(_compose(sections, kept)) <= max_tokens:
             break
-        label = label_of[index]
-        pool = list(dict.fromkeys(bodies[index]))  # de-duplicated, order kept
-        while pool and estimate_tokens("\n".join(pruned)) > max_tokens:
-            content = pool.pop()
-            try:
-                pruned.remove(content)
-            except ValueError:  # pragma: no cover - defensive
-                break
-            omitted += 1
-        if not pool:
-            # The section is now empty: drop its label and record it as hidden.
-            try:
-                pruned.remove(label)
-            except ValueError:  # pragma: no cover - defensive
-                pass
-            hidden.append(label)
-    return _TrimReport(lines=pruned, omitted=omitted, hidden=hidden)
+        title = titles[order_index]
+        if line_index in kept[title]:
+            kept[title] = [index for index in kept[title] if index != line_index]
+
+    return {title: indices for title, indices in kept.items() if indices}
 
 
-def _label_lookup(lines: List[str], bodies: List[List[str]]) -> List[str]:
-    """Map each section body back to the label line immediately above it.
+def _kept_indices(kept: dict, title: str) -> List[int]:
+    """Return a section's kept line indices (empty list when it kept none)."""
+    return kept.get(title) or []
 
-    The label line is identified by the fact that it directly precedes the
-    section's first content line, so this does not depend on how labels are
-    spelled.
 
-    Args:
-        lines: The flattened render (section labels interleaved).
-        bodies: The rendered content of each section, in render order.
+def _render_body(sections: dict, kept: dict) -> str:
+    """Assemble the surviving lines, grouped under their section labels.
 
-    Returns:
-        The label line per section, parallel to ``bodies``.
+    Labels are emitted only for sections that kept at least one line, and lines
+    keep their original (score-descending) order inside a section: the selection
+    chooses *what* survives, never the layout.
     """
-    labels: List[str] = []
-    for body in bodies:
-        if not body:
-            labels.append("")
+    parts: List[str] = []
+    for title, lines in sections.items():
+        indices = _kept_indices(kept, title)
+        if not indices:
             continue
-        index = lines.index(body[0])
-        labels.append(lines[index - 1] if index > 0 else "")
-    return labels
+        parts.append(title)
+        parts.extend(lines[index][0] for index in indices)
+    return "\n".join(parts)
+
+
+def _compose(sections: dict, kept: dict) -> str:
+    """Render the complete artifact (body + footer) for a candidate selection.
+
+    The footer is derived from the same selection, so what the fit check measures
+    is exactly what the caller receives — including the "what was left out" line,
+    whose length depends on how much was dropped.
+    """
+    counts = {title: len(indices) for title, indices in kept.items() if indices}
+    hidden = [title for title in sections if not kept.get(title)]
+    omitted = sum(len(lines) for lines in sections.values()) - sum(counts.values())
+    body = _render_body(sections, kept)
+    footer = _render_footer(omitted, hidden, counts)
+    return body + "\n\n" + footer if body else footer
 
 
 def _render_detail(buckets: dict, user_id: str, max_tokens: int) -> str:
