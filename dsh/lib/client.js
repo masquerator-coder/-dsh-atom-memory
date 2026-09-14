@@ -8,6 +8,14 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
 		//#region src/client/memory-settings-controller.ts
+		/** Unwrap a `WireResult` to its `.value`, throwing on a failed call. */
+		function unwrap(result) {
+			if (result == null || result.ok === false) {
+				const message = result?.error != null ? String(result.error?.message ?? result.error) : "Remote call failed";
+				throw new Error(message);
+			}
+			return result.value;
+		}
 		const USER = "global";
 		var MemorySettingsController = class {
 			scope;
@@ -70,15 +78,17 @@ window.__ModuleLoader__.load({
 			}
 			async refreshData() {
 				try {
-					const [facts, profile] = await Promise.all([this.r().listFacts({
+					const [factsR, profileR] = await Promise.all([this.r().listFacts({
 						user: USER,
 						limit: 200
 					}), this.r().listProfile({ user: USER })]);
+					const facts = unwrap(factsR);
+					const profile = unwrap(profileR);
 					this.store.set({
 						...this.store.getSnapshot(),
 						data: {
-							facts: facts.facts,
-							profile: profile.profile
+							facts: Array.isArray(facts.facts) ? facts.facts : [],
+							profile: Array.isArray(profile.profile) ? profile.profile : []
 						},
 						lastError: void 0
 					});
@@ -140,15 +150,18 @@ window.__ModuleLoader__.load({
 				}
 			}
 			async backup() {
-				return this.r().backup({ user: USER });
+				return unwrap(await this.r().backup({ user: USER }));
 			}
 			async restore(payload) {
-				const result = await this.r().restore({
+				const result = unwrap(await this.r().restore({
 					user: USER,
 					payload
-				});
+				}));
 				await this.refreshData();
-				return result;
+				return {
+					facts_written: Number(result.facts_written ?? 0),
+					profile_written: Number(result.profile_written ?? 0)
+				};
 			}
 		};
 		/** Fill defaults onto a (possibly partial / identical) section value. */
@@ -309,6 +322,8 @@ window.__ModuleLoader__.load({
 				props.refreshData();
 			}, [props]);
 			const busy = state.loading || phase === "busy";
+			const profile = state.data?.profile ?? [];
+			const facts = state.data?.facts ?? [];
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: css.section,
 				children: [
@@ -392,10 +407,10 @@ window.__ModuleLoader__.load({
 						disabled: busy,
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("profileHeader") }),
-							state.data.profile.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+							profile.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 								className: css.empty,
 								children: t("profileEmpty")
-							}) : state.data.profile.map((row, index) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ProfileRow, {
+							}) : profile.map((row, index) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ProfileRow, {
 								t,
 								row,
 								onSave: (d) => {
@@ -422,10 +437,10 @@ window.__ModuleLoader__.load({
 							t("memoryHeader"),
 							" · ",
 							t("factsHeader")
-						] }), state.data.facts.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+						] }), facts.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 							className: css.empty,
 							children: t("factsEmpty")
-						}) : state.data.facts.map((fact) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FactRow, {
+						}) : facts.map((fact) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FactRow, {
 							t,
 							fact,
 							onSave: (d) => {

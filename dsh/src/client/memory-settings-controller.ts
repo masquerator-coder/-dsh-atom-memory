@@ -67,9 +67,23 @@ export interface MemorySettingsFace {
   restore: (payload: Record<string, unknown>) => Promise<{ facts_written: number; profile_written: number }>
 }
 
+/** A minimal view of the wire result the client namespace methods resolve to.
+ *
+ * The dsh Client Remote `invoke` path returns `RemoteResult<unknown>` —
+ * `{ ok: true, value: <method return> }` or `{ ok: false, error }` — NOT the
+ * bare method return. Consumers unwrap `.value` (the harness's own idiom, e.g.
+ * `settings-scope.ts` reads `response.value`). This interface models that shape.
+ */
+interface WireResult<T> {
+  ok: boolean
+  /** The Host method's JSON return when `ok` is true. */
+  value: T
+  error?: unknown
+}
+
 /** Minimal structural shape of the `atom-memory` Remote namespace. */
 interface RemoteAtomMemory {
-  listFacts(args: { user: string; offset?: number; limit?: number }): Promise<{ facts: MemoryData['facts']; total: number }>
+  listFacts(args: { user: string; offset?: number; limit?: number }): Promise<WireResult<{ facts: MemoryData['facts']; total: number }>>
   editFact(args: {
     user: string
     fact_id: string
@@ -78,12 +92,23 @@ interface RemoteAtomMemory {
     object?: string
     content?: string
     type?: string
-  }): Promise<unknown>
-  listProfile(args: { user: string }): Promise<{ profile: MemoryData['profile'] }>
-  upsertProfile(args: { user: string; section: string; key: string; value: string }): Promise<unknown>
-  deleteProfile(args: { user: string; section: string; key: string }): Promise<unknown>
-  backup(args: { user: string }): Promise<Record<string, unknown>>
-  restore(args: { user: string; payload: Record<string, unknown> }): Promise<{ facts_written: number; profile_written: number }>
+  }): Promise<WireResult<unknown>>
+  listProfile(args: { user: string }): Promise<WireResult<{ profile: MemoryData['profile'] }>>
+  upsertProfile(args: { user: string; section: string; key: string; value: string }): Promise<WireResult<unknown>>
+  deleteProfile(args: { user: string; section: string; key: string }): Promise<WireResult<unknown>>
+  backup(args: { user: string }): Promise<WireResult<Record<string, unknown>>>
+  restore(args: { user: string; payload: Record<string, unknown> }): Promise<WireResult<{ facts_written: number; profile_written: number }>>
+}
+
+/** Unwrap a `WireResult` to its `.value`, throwing on a failed call. */
+function unwrap<T>(result: WireResult<T>): T {
+  if (result == null || result.ok === false) {
+    const message = result?.error != null
+      ? String((result.error as { message?: unknown } | undefined)?.message ?? result.error)
+      : 'Remote call failed'
+    throw new Error(message)
+  }
+  return result.value
 }
 
 const USER = 'global'
@@ -149,13 +174,18 @@ export class MemorySettingsController {
 
   private async refreshData(): Promise<void> {
     try {
-      const [facts, profile] = await Promise.all([
+      const [factsR, profileR] = await Promise.all([
         this.r().listFacts({ user: USER, limit: 200 }),
         this.r().listProfile({ user: USER }),
       ])
+      const facts = unwrap(factsR)
+      const profile = unwrap(profileR)
       this.store.set({
         ...this.store.getSnapshot(),
-        data: { facts: facts.facts, profile: profile.profile },
+        data: {
+          facts: Array.isArray(facts.facts) ? facts.facts : [],
+          profile: Array.isArray(profile.profile) ? profile.profile : [],
+        },
         lastError: undefined,
       })
     } catch (err) {
@@ -207,13 +237,16 @@ export class MemorySettingsController {
   }
 
   private async backup(): Promise<Record<string, unknown>> {
-    return this.r().backup({ user: USER })
+    return unwrap(await this.r().backup({ user: USER }))
   }
 
   private async restore(payload: Record<string, unknown>): Promise<{ facts_written: number; profile_written: number }> {
-    const result = await this.r().restore({ user: USER, payload })
+    const result = unwrap(await this.r().restore({ user: USER, payload }))
     await this.refreshData()
-    return result
+    return {
+      facts_written: Number(result.facts_written ?? 0),
+      profile_written: Number(result.profile_written ?? 0),
+    }
   }
 }
 

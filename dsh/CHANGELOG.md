@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Fixed
+- **设置页点开「记忆」右侧空白**：组件在渲染 `state.data.profile.length` 时抛
+  `Cannot read properties of undefined (reading 'length')`，被插槽 `SlotErrorBoundary`
+  吞成空面板。根因：dsh Client Remote 的命名空间方法 `await ctx.remote.atomMemory.X(...)`
+  返回的是 **`RemoteResult`（`{ ok: true, value: <方法返回值> }`）**，不是裸方法返回值
+  （host 官方消费写法是 `response.value`，见 `settings-scope.ts` 的 `acceptView(response.value)`）。
+  而控制器 `refreshData` 里直接 `facts.facts` / `profile.profile` 读取，拿到的是 `undefined`
+  → `data = { facts: undefined, profile: undefined }` → 渲染崩。修复：
+  ① 控制器把所有 Remote 调用统一经 `unwrap()` 剥出 `.value`（`backup`/`restore` 同样剥壳），
+  并把 `facts`/`profile` 用 `Array.isArray` 兜底为空数组；② 组件对 `state.data?.facts ?? []`
+  / `state.data?.profile ?? []` 做防御，section 永不因异常数据空白。新增回归测试
+  `tests/memory-settings-controller.test.ts`（WireResult 剥壳 + 畸形结果兜底）与
+  `tests/section-render.smoke.test.ts` / `tests/section-render.client.test.ts`
+  （真实 uSES 绑定 + jsdom 客户端渲染，复现「空白面板」路径）。
 - **记忆设置面板报「操作失败：this.r(...).listFacts is not a function」**：根因是浏览器侧
   从未把插件自带的 `atomMemory` Remote 命名空间 **mount 进 `ctx.remote`**——dsh 的
   `@deepseek-ai/dsh-api-remotes` 只 mount 它自己的生成命名空间（settings/workspace/…），

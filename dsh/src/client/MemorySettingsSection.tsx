@@ -70,6 +70,11 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
 
   const busy = state.loading || phase === 'busy'
 
+  // Belt-and-suspenders: never let a nullish `state.data` (or a malformed
+  // facts/profile payload) blank the panel — default to empty lists.
+  const profile = state.data?.profile ?? []
+  const facts = state.data?.facts ?? []
+
   return (
     <div className={css.section}>
       <header className={css.header}>
@@ -144,8 +149,8 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
       {/* 3) user profile editing */}
       <fieldset className={css.block} disabled={busy}>
         <legend>{t('profileHeader')}</legend>
-        {state.data.profile.length === 0 ? <p className={css.empty}>{t('profileEmpty')}</p> : (
-          state.data.profile.map((row, index) => (
+        {profile.length === 0 ? <p className={css.empty}>{t('profileEmpty')}</p> : (
+          profile.map((row, index) => (
             <ProfileRow
               key={`${row.section}:${row.key}:${index}`}
               t={t}
@@ -167,8 +172,8 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
       {/* 4) memory & edit */}
       <fieldset className={css.block} disabled={busy}>
         <legend>{t('memoryHeader')} · {t('factsHeader')}</legend>
-        {state.data.facts.length === 0 ? <p className={css.empty}>{t('factsEmpty')}</p> : (
-          state.data.facts.map(fact => (
+        {facts.length === 0 ? <p className={css.empty}>{t('factsEmpty')}</p> : (
+          facts.map(fact => (
             <FactRow
               key={fact.fact_id}
               t={t}

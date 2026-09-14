@@ -16,5 +16,9 @@
     "moduleDetection": "force",
     "noEmit": true
   },
-  "include": ["src/client"]
+  "include": [
+    "src/client",
+    "tests/section-render.smoke.test.ts",
+    "tests/section-render.client.test.ts"
+  ]
 }

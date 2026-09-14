@@ -16,5 +16,11 @@
     "noEmit": true
   },
   "include": ["src", "tests"],
-  "exclude": ["src/client"]
+  "exclude": [
+    "src/client",
+    // JSX-importing client render tests are type-checked by tsconfig.client.json
+    // and executed by vitest (esbuild); the node typecheck has no JSX runtime.
+    "tests/section-render.smoke.test.ts",
+    "tests/section-render.client.test.ts"
+  ]
 }

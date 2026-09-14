@@ -46,11 +46,11 @@ function fakeScope(initial: SettingsScopeSnapshot<MemorySettingsSection>) {
 }
 
 function fakeRemote() {
-  const backup = vi.fn(async () => ({ version: 1, facts: [], profile: [] }))
-  const restore = vi.fn(async () => ({ facts_written: 2, profile_written: 1 }))
-  const listFacts = vi.fn(async (): Promise<{ facts: Array<{ fact_id: string; subject: string; predicate: string; object: string }>; total: number }> => ({ facts: [], total: 0 }))
-  const listProfile = vi.fn(async () => ({ profile: [] }))
-  const remote = { listFacts, editFact: vi.fn(), listProfile, upsertProfile: vi.fn(), deleteProfile: vi.fn(), backup, restore }
+  const backup = vi.fn(async () => ({ ok: true, value: { version: 1, facts: [], profile: [] } }))
+  const restore = vi.fn(async () => ({ ok: true, value: { facts_written: 2, profile_written: 1 } }))
+  const listFacts = vi.fn(async (): Promise<{ ok: boolean; value: { facts: Array<{ fact_id: string; subject: string; predicate: string; object: string }>; total: number } }> => ({ ok: true, value: { facts: [], total: 0 } }))
+  const listProfile = vi.fn(async () => ({ ok: true, value: { profile: [] } }))
+  const remote = { listFacts, editFact: vi.fn(async () => ({ ok: true, value: {} })), listProfile, upsertProfile: vi.fn(async () => ({ ok: true, value: {} })), deleteProfile: vi.fn(async () => ({ ok: true, value: {} })), backup, restore }
   return { remote, backup, restore, listFacts, listProfile }
 }
 
@@ -109,13 +109,31 @@ describe('MemorySettingsController', () => {
     const { scope } = fakeScope(snapshot({}))
     const { remote, listFacts, listProfile } = fakeRemote()
     listFacts.mockResolvedValue({
-      facts: [{ fact_id: 'f1', subject: 's', predicate: 'p', object: 'o' }],
-      total: 1,
+      ok: true,
+      value: { facts: [{ fact_id: 'f1', subject: 's', predicate: 'p', object: 'o' }], total: 1 },
     })
     const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
     await controller.inject().refreshData()
     expect(listFacts).toHaveBeenCalledWith({ user: 'global', limit: 200 })
     expect(listProfile).toHaveBeenCalledWith({ user: 'global' })
-    expect(controller.inject().hooks.memorySettings.getSnapshot().data.facts[0]?.fact_id).toBe('f1')
+    const snap = controller.inject().hooks.memorySettings.getSnapshot()
+    // Regression: the wire shape is `{ok, value}` — data must hold the raw
+    // arrays (never undefined), otherwise `state.data.profile.length` throws
+    // and the settings section blanks.
+    expect(Array.isArray(snap.data.facts)).toBe(true)
+    expect(Array.isArray(snap.data.profile)).toBe(true)
+    expect(snap.data.facts[0]?.fact_id).toBe('f1')
+  })
+
+  it('normalizes malformed remote list results to empty arrays (no blank-section crash)', async () => {
+    const { scope } = fakeScope(snapshot({}))
+    const { remote, listFacts, listProfile } = fakeRemote()
+    listFacts.mockResolvedValue({ ok: true, value: { facts: undefined, total: 0 } } as never)
+    listProfile.mockResolvedValue({ ok: true, value: { profile: undefined } } as never)
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
+    await controller.inject().refreshData()
+    const snap = controller.inject().hooks.memorySettings.getSnapshot()
+    expect(snap.data.facts).toEqual([])
+    expect(snap.data.profile).toEqual([])
   })
 })
