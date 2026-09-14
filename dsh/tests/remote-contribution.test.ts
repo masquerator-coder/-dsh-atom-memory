@@ -20,6 +20,8 @@ describe('ATOM_MEMORY_REMOTE', () => {
     expect(methods).toEqual([
       'listFacts',
       'editFact',
+      'deleteFact',
+      'memoryMd',
       'listProfile',
       'upsertProfile',
       'deleteProfile',

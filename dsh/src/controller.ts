@@ -86,6 +86,30 @@ export class AtomMemoryController extends TypertRemoteService {
     }) as Promise<Record<string, unknown>>
   }
 
+  /** Soft-retract (forget) one active fact. */
+  @Remote
+  async deleteFact(args: { user: string; fact_id: string }): Promise<Record<string, unknown>> {
+    this.assertReady()
+    if (!args.fact_id) throw new Error('deleteFact requires fact_id')
+    return this.bridge.call('forget', {
+      user_id: args.user,
+      fact_id: args.fact_id,
+    }) as Promise<Record<string, unknown>>
+  }
+
+  /** Render the user's `memory.md` (the injected system-prompt memory view). */
+  @Remote
+  async memoryMd(args: { user: string; maxTokens?: number }): Promise<string> {
+    this.assertReady()
+    const result = await this.bridge.call<{ text?: string }>('memory_md', {
+      user_id: args.user,
+      max_tokens: args.maxTokens ?? 1500,
+    })
+    // `AtomMem.memory_md` returns the markdown string directly; tolerate a
+    // wrapped shape in case the Python side ever changes the contract.
+    return typeof result === 'string' ? result : (result?.text ?? '')
+  }
+
   /** List the user's profile rows. */
   @Remote
   async listProfile(args: { user: string }): Promise<Record<string, unknown>> {

@@ -47,6 +47,8 @@ function buildController() {
   const remote = {
     listFacts: async () => ({ ok: true, value: { facts: [], total: 0 } }),
     editFact: async () => ({ ok: true, value: {} }),
+    deleteFact: async () => ({ ok: true, value: {} }),
+    memoryMd: async () => ({ ok: true, value: '# memory.md\ntest' }),
     listProfile: async () => ({ ok: true, value: { profile: [] } }),
     upsertProfile: async () => ({ ok: true, value: {} }),
     deleteProfile: async () => ({ ok: true, value: {} }),
@@ -78,7 +80,8 @@ describe('MemorySettingsSection client render', () => {
       t: t as never,
       useMemorySettings: useMemorySettings as never,
       setEnabled, refreshData, setExtractionModel: face.setExtractionModel,
-      saveFact: face.saveFact, upsertProfile: face.upsertProfile,
+      saveFact: face.saveFact, deleteFact: face.deleteFact, fetchMemoryMd: face.fetchMemoryMd,
+      upsertProfile: face.upsertProfile,
       deleteProfile: face.deleteProfile, backup: face.backup, restore: face.restore,
       close: () => {},
     }
@@ -87,6 +90,7 @@ describe('MemorySettingsSection client render', () => {
     })
     expect(screen.getByText('记忆')).toBeTruthy()
     expect(screen.getByText('LLM 抽取模型')).toBeTruthy()
+    expect(screen.getByText('查看 memory.md')).toBeTruthy()
     expect(refreshData).toHaveBeenCalled()
     expect(screen.queryByText(LOCALE_NS + ':title')).toBeNull()
   })

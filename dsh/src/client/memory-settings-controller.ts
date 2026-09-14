@@ -33,6 +33,8 @@ export interface MemoryData {
     content?: string
   }>
   profile: Array<{ section: string; key: string; value: string }>
+  /** The rendered `memory.md` view (injected system-prompt memory), lazy-loaded. */
+  memoryMd?: string
 }
 
 /** What the panel renders. */
@@ -61,6 +63,8 @@ export interface MemorySettingsFace {
   setExtractionModel: (provider: string, model: string) => Promise<void>
   refreshData: () => Promise<void>
   saveFact: (fact: MemoryData['facts'][number]) => Promise<void>
+  deleteFact: (factId: string) => Promise<void>
+  fetchMemoryMd: () => Promise<string>
   upsertProfile: (section: string, key: string, value: string) => Promise<void>
   deleteProfile: (section: string, key: string) => Promise<void>
   backup: () => Promise<Record<string, unknown>>
@@ -93,6 +97,8 @@ interface RemoteAtomMemory {
     content?: string
     type?: string
   }): Promise<WireResult<unknown>>
+  deleteFact(args: { user: string; fact_id: string }): Promise<WireResult<unknown>>
+  memoryMd(args: { user: string; maxTokens?: number }): Promise<WireResult<string>>
   listProfile(args: { user: string }): Promise<WireResult<{ profile: MemoryData['profile'] }>>
   upsertProfile(args: { user: string; section: string; key: string; value: string }): Promise<WireResult<unknown>>
   deleteProfile(args: { user: string; section: string; key: string }): Promise<WireResult<unknown>>
@@ -145,6 +151,8 @@ export class MemorySettingsController {
         this.scope.set('extractionModel', { provider, model }),
       refreshData: () => this.refreshData(),
       saveFact: (fact) => this.saveFact(fact),
+      deleteFact: (factId) => this.deleteFact(factId),
+      fetchMemoryMd: () => this.fetchMemoryMd(),
       upsertProfile: (section, key, value) => this.upsertProfile(section, key, value),
       deleteProfile: (section, key) => this.deleteProfile(section, key),
       backup: () => this.backup(),
@@ -211,6 +219,34 @@ export class MemorySettingsController {
       this.store.set({
         ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
       })
+    }
+  }
+
+  private async deleteFact(factId: string): Promise<void> {
+    try {
+      await this.r().deleteFact({ user: USER, fact_id: factId })
+      await this.refreshData()
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+    }
+  }
+
+  private async fetchMemoryMd(): Promise<string> {
+    try {
+      const text = unwrap(await this.r().memoryMd({ user: USER }))
+      this.store.set({
+        ...this.store.getSnapshot(),
+        data: { ...this.store.getSnapshot().data, memoryMd: text },
+        lastError: undefined,
+      })
+      return text
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+      throw err
     }
   }
 

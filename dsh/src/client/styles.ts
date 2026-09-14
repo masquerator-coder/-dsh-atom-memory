@@ -27,6 +27,9 @@ export const memorySettingsStyleText = `
 .atom-memory-fact-row{display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:8px;background:var(--dsh-surface-1,#1f2126)}
 .atom-memory-badge{font-family:var(--dsh-font-mono,monospace);font-size:11px;color:var(--dsh-text-muted,#8a8f98)}
 .atom-memory-fact-fields{display:flex;flex-wrap:wrap;gap:6px}
+.atom-memory-row-actions{display:flex;gap:8px;justify-content:flex-end}
+.atom-memory-row-btn{padding:4px 10px;border:1px solid var(--dsh-border,#3a3d44);border-radius:6px;background:var(--dsh-surface-2,#24262b);color:var(--dsh-text,#e6e8eb);cursor:pointer;font-size:12px}
+.atom-memory-memory-md{max-height:320px;overflow:auto;margin:0;padding:10px 12px;border:1px solid var(--dsh-border,#3a3d44);border-radius:8px;background:var(--dsh-surface-1,#1f2126);color:var(--dsh-text,#e6e8eb);font-family:var(--dsh-font-mono,monospace);font-size:12px;white-space:pre-wrap;word-break:break-word}
 `
 
 /** Ensure the stylesheet is present exactly once (data-plugin guarded). */

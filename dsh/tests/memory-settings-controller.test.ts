@@ -50,8 +50,10 @@ function fakeRemote() {
   const restore = vi.fn(async () => ({ ok: true, value: { facts_written: 2, profile_written: 1 } }))
   const listFacts = vi.fn(async (): Promise<{ ok: boolean; value: { facts: Array<{ fact_id: string; subject: string; predicate: string; object: string }>; total: number } }> => ({ ok: true, value: { facts: [], total: 0 } }))
   const listProfile = vi.fn(async () => ({ ok: true, value: { profile: [] } }))
-  const remote = { listFacts, editFact: vi.fn(async () => ({ ok: true, value: {} })), listProfile, upsertProfile: vi.fn(async () => ({ ok: true, value: {} })), deleteProfile: vi.fn(async () => ({ ok: true, value: {} })), backup, restore }
-  return { remote, backup, restore, listFacts, listProfile }
+  const deleteFact = vi.fn(async () => ({ ok: true, value: {} }))
+  const memoryMd = vi.fn(async () => ({ ok: true, value: '# memory.md\ntest' }))
+  const remote: Record<string, unknown> = { listFacts, editFact: vi.fn(async () => ({ ok: true, value: {} })), deleteFact, memoryMd, listProfile, upsertProfile: vi.fn(async () => ({ ok: true, value: {} })), deleteProfile: vi.fn(async () => ({ ok: true, value: {} })), backup, restore }
+  return { remote, backup, restore, listFacts, listProfile, deleteFact, memoryMd }
 }
 
 describe('MemorySettingsController', () => {
@@ -135,5 +137,29 @@ describe('MemorySettingsController', () => {
     const snap = controller.inject().hooks.memorySettings.getSnapshot()
     expect(snap.data.facts).toEqual([])
     expect(snap.data.profile).toEqual([])
+  })
+
+  it('deletes a fact through the Remote namespace and refreshes', async () => {
+    const { scope } = fakeScope(snapshot({}))
+    const { remote, deleteFact } = fakeRemote()
+    const listFacts = (remote.listFacts as ReturnType<typeof vi.fn>)
+    listFacts.mockResolvedValue({
+      ok: true,
+      value: { facts: [], total: 0 },
+    })
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
+    await controller.inject().deleteFact('f1')
+    expect(deleteFact).toHaveBeenCalledWith({ user: 'global', fact_id: 'f1' })
+  })
+
+  it('fetches and stores the rendered memory.md view', async () => {
+    const { scope } = fakeScope(snapshot({}))
+    const { remote, memoryMd } = fakeRemote()
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
+    const face = controller.inject()
+    const text = await face.fetchMemoryMd()
+    expect(memoryMd).toHaveBeenCalledWith({ user: 'global' })
+    expect(text).toBe('# memory.md\ntest')
+    expect(face.hooks.memorySettings.getSnapshot().data.memoryMd).toBe('# memory.md\ntest')
   })
 })

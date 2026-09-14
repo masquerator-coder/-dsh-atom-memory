@@ -27,6 +27,9 @@ const css = {
   factRow: 'atom-memory-fact-row',
   badge: 'atom-memory-badge',
   factFields: 'atom-memory-fact-fields',
+  rowActions: 'atom-memory-row-actions',
+  rowBtn: 'atom-memory-row-btn',
+  memoryMdView: 'atom-memory-memory-md',
 }
 import { LOCALE_NS, type MemorySettingsLocaleKey } from './locales.ts'
 import { ensureMemorySettingsStyle } from './styles.ts'
@@ -58,6 +61,18 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   // Back-up/restore transient feedback.
   const [status, setStatus] = useState<string>()
   const [phase, setPhase] = useState<'idle' | 'busy'>('idle')
+  // memory.md view expanded / fetching / content.
+  const [memoryMdOpen, setMemoryMdOpen] = useState(false)
+  const [memoryMdBusy, setMemoryMdBusy] = useState(false)
+
+  const toggleMemoryMd = (): void => {
+    const next = !memoryMdOpen
+    setMemoryMdOpen(next)
+    if (next && state.data.memoryMd === undefined) {
+      setMemoryMdBusy(true)
+      void props.fetchMemoryMd().finally(() => setMemoryMdBusy(false))
+    }
+  }
 
   // Load dynamic data on first mount.
   const loadedRef = useRef(false)
@@ -84,6 +99,22 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
 
       {state.lastError ? <div className={css.error}>{t('error', { message: state.lastError })}</div> : null}
       {status ? <div className={css.status}>{status}</div> : null}
+
+      {/* 0) memory.md (injected system-prompt memory view) */}
+      <fieldset className={css.block} disabled={busy || memoryMdBusy}>
+        <legend>{t('memoryMdHeader')}</legend>
+        <p className={css.hint}>{t('memoryMdDesc')}</p>
+        <div className={css.rowActions}>
+          <button type="button" className={css.rowBtn} disabled={busy || memoryMdBusy} onClick={toggleMemoryMd}>
+            {memoryMdOpen ? t('memoryMdClose') : t('memoryMdOpen')}
+          </button>
+        </div>
+        {memoryMdOpen && (
+          state.data.memoryMd === undefined
+            ? <p className={css.hint}>{memoryMdBusy ? t('memoryMdLoading') : t('memoryMdEmpty')}</p>
+            : <pre className={css.memoryMdView}>{state.data.memoryMd}</pre>
+        )}
+      </fieldset>
 
       {/* 1) master switch */}
       <fieldset className={css.block} disabled={!state.available}>
@@ -181,6 +212,9 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
               onSave={(d) => {
                 void props.saveFact({ ...fact, ...d })
               }}
+              onDelete={() => {
+                void props.deleteFact(fact.fact_id)
+              }}
             />
           ))
         )}
@@ -241,6 +275,7 @@ function FactRow(props: {
   t: RowTranslate
   fact: { fact_id: string; subject: string; predicate: string; object: string; content?: string }
   onSave: (d: FactDraft) => void
+  onDelete: () => void
 }) {
   const { t, fact } = props
   const [draft, setDraft] = useState<FactDraft>(() => ({
@@ -257,7 +292,10 @@ function FactRow(props: {
         <input value={draft.object} onChange={(e) => set({ object: e.currentTarget.value })} />
         <textarea value={draft.content} onChange={(e) => set({ content: e.currentTarget.value })} />
       </div>
-      <button type="button" onClick={() => props.onSave(draft)}>{t('editSave')}</button>
+      <div className={css.rowActions}>
+        <button type="button" className={css.rowBtn} onClick={() => props.onSave(draft)}>{t('editSave')}</button>
+        <button type="button" className={css.rowBtn} onClick={props.onDelete}>{t('factDelete')}</button>
+      </div>
     </div>
   )
 }
@@ -280,8 +318,10 @@ function ProfileRow(props: {
         <input value={draft.key} placeholder={t('profileKey')} onChange={(e) => set({ key: e.currentTarget.value })} />
         <input value={draft.value} placeholder={t('profileValue')} onChange={(e) => set({ value: e.currentTarget.value })} />
       </div>
-      <button type="button" onClick={() => props.onSave(draft)}>{t('editSave')}</button>
-      <button type="button" onClick={props.onDelete}>×</button>
+      <div className={css.rowActions}>
+        <button type="button" className={css.rowBtn} onClick={() => props.onSave(draft)}>{t('editSave')}</button>
+        <button type="button" className={css.rowBtn} onClick={props.onDelete}>{t('delete')}</button>
+      </div>
     </div>
   )
 }

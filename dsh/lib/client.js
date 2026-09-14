@@ -53,6 +53,8 @@ window.__ModuleLoader__.load({
 					}),
 					refreshData: () => this.refreshData(),
 					saveFact: (fact) => this.saveFact(fact),
+					deleteFact: (factId) => this.deleteFact(factId),
+					fetchMemoryMd: () => this.fetchMemoryMd(),
 					upsertProfile: (section, key, value) => this.upsertProfile(section, key, value),
 					deleteProfile: (section, key) => this.deleteProfile(section, key),
 					backup: () => this.backup(),
@@ -116,6 +118,40 @@ window.__ModuleLoader__.load({
 						...this.store.getSnapshot(),
 						lastError: err?.message ?? String(err)
 					});
+				}
+			}
+			async deleteFact(factId) {
+				try {
+					await this.r().deleteFact({
+						user: USER,
+						fact_id: factId
+					});
+					await this.refreshData();
+				} catch (err) {
+					this.store.set({
+						...this.store.getSnapshot(),
+						lastError: err?.message ?? String(err)
+					});
+				}
+			}
+			async fetchMemoryMd() {
+				try {
+					const text = unwrap(await this.r().memoryMd({ user: USER }));
+					this.store.set({
+						...this.store.getSnapshot(),
+						data: {
+							...this.store.getSnapshot().data,
+							memoryMd: text
+						},
+						lastError: void 0
+					});
+					return text;
+				} catch (err) {
+					this.store.set({
+						...this.store.getSnapshot(),
+						lastError: err?.message ?? String(err)
+					});
+					throw err;
 				}
 			}
 			async upsertProfile(section, key, value) {
@@ -199,6 +235,14 @@ window.__ModuleLoader__.load({
 				factsEmpty: "暂无原子事实。",
 				factsColumns: "主语 / 谓词 / 宾语 / 类型 / 内容(折叠)",
 				editSave: "保存修改",
+				factDelete: "删除",
+				delete: "删除",
+				memoryMdHeader: "memory.md 记忆视图",
+				memoryMdDesc: "查看注入到会话系统提示词的 memory.md 记忆视图（只读）。",
+				memoryMdOpen: "查看 memory.md",
+				memoryMdClose: "收起",
+				memoryMdLoading: "正在加载…",
+				memoryMdEmpty: "暂无内容（可能是空记忆或尚未加载）。",
 				backupHeader: "记忆备份与恢复",
 				backupDesc: "把记忆导出为 JSON 文件，或从 JSON 文件导入恢复（replace 语义：覆盖当前记忆）。",
 				exportBtn: "导出 JSON",
@@ -230,6 +274,14 @@ window.__ModuleLoader__.load({
 				factsEmpty: "No atomic facts yet.",
 				factsColumns: "Subject / Predicate / Object / Type / Content (collapsed)",
 				editSave: "Save changes",
+				factDelete: "Delete",
+				delete: "Delete",
+				memoryMdHeader: "memory.md memory view",
+				memoryMdDesc: "View the read-only memory.md that is injected into the session system prompt.",
+				memoryMdOpen: "View memory.md",
+				memoryMdClose: "Collapse",
+				memoryMdLoading: "Loading…",
+				memoryMdEmpty: "No content yet (empty memory or not loaded).",
 				backupHeader: "Backup & restore",
 				backupDesc: "Export memory to a JSON file, or import from a JSON file to restore (replace semantics: overwrites current memory).",
 				exportBtn: "Export JSON",
@@ -270,6 +322,9 @@ window.__ModuleLoader__.load({
 .atom-memory-fact-row{display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:8px;background:var(--dsh-surface-1,#1f2126)}
 .atom-memory-badge{font-family:var(--dsh-font-mono,monospace);font-size:11px;color:var(--dsh-text-muted,#8a8f98)}
 .atom-memory-fact-fields{display:flex;flex-wrap:wrap;gap:6px}
+.atom-memory-row-actions{display:flex;gap:8px;justify-content:flex-end}
+.atom-memory-row-btn{padding:4px 10px;border:1px solid var(--dsh-border,#3a3d44);border-radius:6px;background:var(--dsh-surface-2,#24262b);color:var(--dsh-text,#e6e8eb);cursor:pointer;font-size:12px}
+.atom-memory-memory-md{max-height:320px;overflow:auto;margin:0;padding:10px 12px;border:1px solid var(--dsh-border,#3a3d44);border-radius:8px;background:var(--dsh-surface-1,#1f2126);color:var(--dsh-text,#e6e8eb);font-family:var(--dsh-font-mono,monospace);font-size:12px;white-space:pre-wrap;word-break:break-word}
 `;
 		/** Ensure the stylesheet is present exactly once (data-plugin guarded). */
 		function ensureMemorySettingsStyle() {
@@ -307,13 +362,26 @@ window.__ModuleLoader__.load({
 			fileLabel: "atom-memory-file-label",
 			factRow: "atom-memory-fact-row",
 			badge: "atom-memory-badge",
-			factFields: "atom-memory-fact-fields"
+			factFields: "atom-memory-fact-fields",
+			rowActions: "atom-memory-row-actions",
+			rowBtn: "atom-memory-row-btn",
+			memoryMdView: "atom-memory-memory-md"
 		};
 		function MemorySettingsSection(props) {
 			const { t } = props;
 			const state = props.useMemorySettings((snapshot) => snapshot);
 			const [status, setStatus] = (0, react.useState)();
 			const [phase, setPhase] = (0, react.useState)("idle");
+			const [memoryMdOpen, setMemoryMdOpen] = (0, react.useState)(false);
+			const [memoryMdBusy, setMemoryMdBusy] = (0, react.useState)(false);
+			const toggleMemoryMd = () => {
+				const next = !memoryMdOpen;
+				setMemoryMdOpen(next);
+				if (next && state.data.memoryMd === void 0) {
+					setMemoryMdBusy(true);
+					props.fetchMemoryMd().finally(() => setMemoryMdBusy(false));
+				}
+			};
 			const loadedRef = (0, react.useRef)(false);
 			(0, react.useEffect)(() => {
 				if (loadedRef.current) return;
@@ -339,6 +407,34 @@ window.__ModuleLoader__.load({
 						className: css.status,
 						children: status
 					}) : null,
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
+						className: css.block,
+						disabled: busy || memoryMdBusy,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("memoryMdHeader") }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: css.hint,
+								children: t("memoryMdDesc")
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: css.rowActions,
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: css.rowBtn,
+									disabled: busy || memoryMdBusy,
+									onClick: toggleMemoryMd,
+									children: memoryMdOpen ? t("memoryMdClose") : t("memoryMdOpen")
+								})
+							}),
+							memoryMdOpen && (state.data.memoryMd === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: css.hint,
+								children: memoryMdBusy ? t("memoryMdLoading") : t("memoryMdEmpty")
+							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("pre", {
+								className: css.memoryMdView,
+								children: state.data.memoryMd
+							}))
+						]
+					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
 						className: css.block,
 						disabled: !state.available,
@@ -448,6 +544,9 @@ window.__ModuleLoader__.load({
 									...fact,
 									...d
 								});
+							},
+							onDelete: () => {
+								props.deleteFact(fact.fact_id);
 							}
 						}, fact.fact_id))]
 					}),
@@ -558,10 +657,19 @@ window.__ModuleLoader__.load({
 							})
 						]
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-						type: "button",
-						onClick: () => props.onSave(draft),
-						children: t("editSave")
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: css.rowActions,
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: css.rowBtn,
+							onClick: () => props.onSave(draft),
+							children: t("editSave")
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: css.rowBtn,
+							onClick: props.onDelete,
+							children: t("factDelete")
+						})]
 					})
 				]
 			});
@@ -580,38 +688,39 @@ window.__ModuleLoader__.load({
 			}));
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: css.factRow,
-				children: [
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						className: css.factFields,
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: draft.section,
-								placeholder: t("profileSection"),
-								onChange: (e) => set({ section: e.currentTarget.value })
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: draft.key,
-								placeholder: t("profileKey"),
-								onChange: (e) => set({ key: e.currentTarget.value })
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: draft.value,
-								placeholder: t("profileValue"),
-								onChange: (e) => set({ value: e.currentTarget.value })
-							})
-						]
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					className: css.factFields,
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+							value: draft.section,
+							placeholder: t("profileSection"),
+							onChange: (e) => set({ section: e.currentTarget.value })
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+							value: draft.key,
+							placeholder: t("profileKey"),
+							onChange: (e) => set({ key: e.currentTarget.value })
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+							value: draft.value,
+							placeholder: t("profileValue"),
+							onChange: (e) => set({ value: e.currentTarget.value })
+						})
+					]
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					className: css.rowActions,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 						type: "button",
+						className: css.rowBtn,
 						onClick: () => props.onSave(draft),
 						children: t("editSave")
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 						type: "button",
+						className: css.rowBtn,
 						onClick: props.onDelete,
-						children: "×"
-					})
-				]
+						children: t("delete")
+					})]
+				})]
 			});
 		}
 		//#endregion
@@ -646,6 +755,8 @@ window.__ModuleLoader__.load({
 			descriptors: [
 				jsonArgsMethod("listFacts", true),
 				jsonArgsMethod("editFact", true),
+				jsonArgsMethod("deleteFact", true),
+				jsonArgsMethod("memoryMd", true),
 				jsonArgsMethod("listProfile", true),
 				jsonArgsMethod("upsertProfile", true),
 				jsonArgsMethod("deleteProfile", true),

@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+- **记忆设置面板三处交互调整**（按用户反馈）：
+  1. **记忆开关 / LLM 抽取模型置灰**：根因是宿主 `index.ts` 用同步 `ctx.get('settings')`
+     注册设置命名空间，而 `get` 在 settings 服务的 fiber 尚未激活时返回 `undefined`
+     → `atom-memory` 命名空间从未注册 → 浏览器 `settings.describe` 拿不到它 →
+     scope `status:'unavailable'` → `available:false` → 开关/模型被 `disabled`。
+     改为 `ctx.inject(['settings'], …)`（等服务就绪）再 `installSection`，对齐 harness
+     自带的调用方式。
+  2. **记忆（原子事实）列表每行删除按钮**：新增 Host `@Remote deleteFact`
+     （桥接 RPC `forget`，软撤回）、浏览器 `atomMemory` 描述符 `deleteFact`、
+     控制器 face 方法 `deleteFact(factId)` 与 `FactRow` 每行「删除」按钮；
+     「User 画像编辑」每行改为「保存修改 / 删除」两个按钮。
+  3. **memory.md 记忆视图查看按钮**：新增 Host `@Remote memoryMd`
+     （桥接 RPC `memory_md`，返回注入会话系统提示词的 memory.md 字符串）、
+     浏览器描述符 `memoryMd`、控制器 face 方法 `fetchMemoryMd()`（结果存入
+     `state.data.memoryMd`），设置面板新增「查看 memory.md」折叠区（只读 `<pre>`）。
+
 ### Fixed
 - **设置页点开「记忆」右侧空白**：组件在渲染 `state.data.profile.length` 时抛
   `Cannot read properties of undefined (reading 'length')`，被插槽 `SlotErrorBoundary`

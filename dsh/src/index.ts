@@ -201,27 +201,34 @@ export function apply(ctx: Context, config: ConfigShape): void {
   // Settings namespace: the composition entry seeds the runtime; a settings
   // write replaces it live. This powers the memory master switch (feature 1)
   // and the LLM extraction model override (feature 2) without a restart.
-  const settings = ctx.get('settings') as {
-    installSection?(
-      owner: Context,
-      ns: string,
-      schema: unknown,
-      entry: LiveRuntime,
-      hooks: {
-        setSource(current: () => LiveRuntime): void
-        onChange(): void
-        validate?(value: LiveRuntime): void
-      },
-    ): void
-  } | undefined
-  if (settings?.installSection !== undefined) {
+  //
+  // Registration runs on `inject(['settings'], …)` rather than a synchronous
+  // `ctx.get('settings')`: `get` returns `undefined` while the settings provider's
+  // fiber is not yet active, which silently skipped registration and left the
+  // browser panel's switch/model grayed out. `inject` waits for the service,
+  // mirroring the harness's own `settings.installSection` call sites.
+  ctx.inject(['settings'], (settingsCtx: Context) => {
+    const settings = settingsCtx.get('settings') as {
+      installSection(
+        owner: Context,
+        ns: string,
+        schema: unknown,
+        entry: LiveRuntime,
+        hooks: {
+          setSource(current: () => LiveRuntime): void
+          onChange(): void
+          validate?(value: LiveRuntime): void
+        },
+      ): void
+    } | undefined
+    if (settings?.installSection === undefined) return
     let source: () => LiveRuntime = () => seedRuntime(config)
     settings.installSection(ctx, SETTINGS_NAMESPACE, LiveSettingsSchema, source(), {
       setSource: (current) => { source = current },
       onChange: () => { runtime.set(source()) },
     })
     ctx.logger(`[dsh-atom-memory] settings section "${SETTINGS_NAMESPACE}" registered`)
-  }
+  })
 
   ctx.logger('[dsh-atom-memory] loaded')
 }
