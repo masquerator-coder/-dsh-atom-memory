@@ -162,4 +162,39 @@ describe('MemorySettingsController', () => {
     expect(text).toBe('# memory.md\ntest')
     expect(face.hooks.memorySettings.getSnapshot().data.memoryMd).toBe('# memory.md\ntest')
   })
+
+  it('batch-saves a facts table: edits non-deleted rows, deletes marked rows, one refresh', async () => {
+    const { scope } = fakeScope(snapshot({}))
+    const { remote } = fakeRemote()
+    const editFact = remote.editFact as ReturnType<typeof vi.fn>
+    const deleteFact = remote.deleteFact as ReturnType<typeof vi.fn>
+    const listFacts = remote.listFacts as ReturnType<typeof vi.fn>
+    listFacts.mockResolvedValue({ ok: true, value: { facts: [], total: 0 } })
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
+    await controller.inject().saveAllFacts([
+      { fact_id: 'f1', subject: 'a', predicate: 'b', object: 'c', deleted: false },
+      { fact_id: 'f2', subject: 'x', predicate: 'y', object: 'z', deleted: true },
+    ])
+    expect(editFact).toHaveBeenCalledWith(expect.objectContaining({ fact_id: 'f1' }))
+    expect(deleteFact).toHaveBeenCalledWith({ user: 'global', fact_id: 'f2' })
+    // After the batch, the panel refreshes (so one listFacts read happens again).
+    expect(listFacts.mock.calls.length).toBeGreaterThan(0)
+  })
+
+  it('batch-saves a profile table: upserts non-deleted rows, deletes marked rows', async () => {
+    const { scope } = fakeScope(snapshot({}))
+    const { remote } = fakeRemote()
+    const upsertProfile = remote.upsertProfile as ReturnType<typeof vi.fn>
+    const deleteProfile = remote.deleteProfile as ReturnType<typeof vi.fn>
+    const listProfile = remote.listProfile as ReturnType<typeof vi.fn>
+    listProfile.mockResolvedValue({ ok: true, value: { profile: [] } })
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
+    await controller.inject().saveAllProfile([
+      { section: '背景', key: '职业', value: '工程师', deleted: false },
+      { section: '偏好', key: '语言', value: 'Python', deleted: true },
+    ])
+    expect(upsertProfile).toHaveBeenCalledWith({ user: 'global', section: '背景', key: '职业', value: '工程师' })
+    expect(deleteProfile).toHaveBeenCalledWith({ user: 'global', section: '偏好', key: '语言' })
+    expect(listProfile.mock.calls.length).toBeGreaterThan(0)
+  })
 })

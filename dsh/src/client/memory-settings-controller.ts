@@ -67,8 +67,33 @@ export interface MemorySettingsFace {
   fetchMemoryMd: () => Promise<string>
   upsertProfile: (section: string, key: string, value: string) => Promise<void>
   deleteProfile: (section: string, key: string) => Promise<void>
+  /** Batch-save an Excel-style facts table (edit changed rows, delete marked rows) in one pass. */
+  saveAllFacts: (rows: FactEditRow[]) => Promise<void>
+  /** Batch-save an Excel-style profile table (upsert changed rows, delete marked rows) in one pass. */
+  saveAllProfile: (rows: ProfileEditRow[]) => Promise<void>
   backup: () => Promise<Record<string, unknown>>
   restore: (payload: Record<string, unknown>) => Promise<{ facts_written: number; profile_written: number }>
+}
+
+/** One facts-table row edited by the Excel-style modal editor. */
+export interface FactEditRow {
+  fact_id: string
+  subject: string
+  predicate: string
+  object: string
+  content?: string
+  type?: string
+  /** Marked for soft-delete when saving. */
+  deleted?: boolean
+}
+
+/** One profile-table row edited by the Excel-style modal editor. */
+export interface ProfileEditRow {
+  section: string
+  key: string
+  value: string
+  /** Marked for deletion when saving. */
+  deleted?: boolean
 }
 
 /** A minimal view of the wire result the client namespace methods resolve to.
@@ -155,6 +180,8 @@ export class MemorySettingsController {
       fetchMemoryMd: () => this.fetchMemoryMd(),
       upsertProfile: (section, key, value) => this.upsertProfile(section, key, value),
       deleteProfile: (section, key) => this.deleteProfile(section, key),
+      saveAllFacts: (rows) => this.saveAllFacts(rows),
+      saveAllProfile: (rows) => this.saveAllProfile(rows),
       backup: () => this.backup(),
       restore: (payload) => this.restore(payload),
     }
@@ -264,6 +291,50 @@ export class MemorySettingsController {
   private async deleteProfile(section: string, key: string): Promise<void> {
     try {
       await this.r().deleteProfile({ user: USER, section, key })
+      await this.refreshData()
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+    }
+  }
+
+  private async saveAllFacts(rows: FactEditRow[]): Promise<void> {
+    try {
+      for (const row of rows) {
+        if (row.deleted) {
+          await this.r().deleteFact({ user: USER, fact_id: row.fact_id })
+        } else {
+          await this.r().editFact({
+            user: USER,
+            fact_id: row.fact_id,
+            subject: row.subject,
+            predicate: row.predicate,
+            object: row.object,
+            content: row.content,
+            type: row.type,
+          })
+        }
+      }
+      await this.refreshData()
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+    }
+  }
+
+  private async saveAllProfile(rows: ProfileEditRow[]): Promise<void> {
+    try {
+      for (const row of rows) {
+        if (row.deleted) {
+          await this.r().deleteProfile({ user: USER, section: row.section, key: row.key })
+        } else {
+          await this.r().upsertProfile({
+            user: USER, section: row.section, key: row.key, value: row.value,
+          })
+        }
+      }
       await this.refreshData()
     } catch (err) {
       this.store.set({

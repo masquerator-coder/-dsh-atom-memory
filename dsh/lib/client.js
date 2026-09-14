@@ -57,6 +57,8 @@ window.__ModuleLoader__.load({
 					fetchMemoryMd: () => this.fetchMemoryMd(),
 					upsertProfile: (section, key, value) => this.upsertProfile(section, key, value),
 					deleteProfile: (section, key) => this.deleteProfile(section, key),
+					saveAllFacts: (rows) => this.saveAllFacts(rows),
+					saveAllProfile: (rows) => this.saveAllProfile(rows),
 					backup: () => this.backup(),
 					restore: (payload) => this.restore(payload)
 				};
@@ -185,6 +187,50 @@ window.__ModuleLoader__.load({
 					});
 				}
 			}
+			async saveAllFacts(rows) {
+				try {
+					for (const row of rows) if (row.deleted) await this.r().deleteFact({
+						user: USER,
+						fact_id: row.fact_id
+					});
+					else await this.r().editFact({
+						user: USER,
+						fact_id: row.fact_id,
+						subject: row.subject,
+						predicate: row.predicate,
+						object: row.object,
+						content: row.content,
+						type: row.type
+					});
+					await this.refreshData();
+				} catch (err) {
+					this.store.set({
+						...this.store.getSnapshot(),
+						lastError: err?.message ?? String(err)
+					});
+				}
+			}
+			async saveAllProfile(rows) {
+				try {
+					for (const row of rows) if (row.deleted) await this.r().deleteProfile({
+						user: USER,
+						section: row.section,
+						key: row.key
+					});
+					else await this.r().upsertProfile({
+						user: USER,
+						section: row.section,
+						key: row.key,
+						value: row.value
+					});
+					await this.refreshData();
+				} catch (err) {
+					this.store.set({
+						...this.store.getSnapshot(),
+						lastError: err?.message ?? String(err)
+					});
+				}
+			}
 			async backup() {
 				return unwrap(await this.r().backup({ user: USER }));
 			}
@@ -226,17 +272,35 @@ window.__ModuleLoader__.load({
 				modelHint: "provider 留空视为跟随 dsh 默认模型。",
 				profileHeader: "User 画像编辑",
 				profileEmpty: "暂无画像条目。",
+				profileEditBtn: "编辑画像",
 				profileSection: "属性(Section)",
 				profileKey: "键(Key)",
 				profileValue: "值(Value)",
 				profileAdd: "添加条目",
+				profileModalTitle: "编辑 User 画像",
+				profileColSection: "Section",
+				profileColKey: "Key",
+				profileColValue: "Value",
 				memoryHeader: "记忆与编辑",
 				factsHeader: "原子事实",
 				factsEmpty: "暂无原子事实。",
+				memoryEditBtn: "编辑记忆",
+				memoryModalTitle: "编辑记忆（原子事实）",
 				factsColumns: "主语 / 谓词 / 宾语 / 类型 / 内容(折叠)",
+				colSubject: "主语",
+				colPredicate: "谓词",
+				colObject: "宾语",
+				colContent: "内容",
+				colActions: "操作",
+				newRowPlaceholder: "（新条目，保存时写入）",
 				editSave: "保存修改",
 				factDelete: "删除",
 				delete: "删除",
+				saveAll: "保存全部",
+				cancel: "取消",
+				addRow: "添加一行",
+				close: "关闭",
+				saving: "保存中…",
 				memoryMdHeader: "memory.md 记忆视图",
 				memoryMdDesc: "查看注入到会话系统提示词的 memory.md 记忆视图（只读）。",
 				memoryMdOpen: "查看 memory.md",
@@ -265,17 +329,35 @@ window.__ModuleLoader__.load({
 				modelHint: "Leaving provider empty follows the dsh default model.",
 				profileHeader: "User profile editing",
 				profileEmpty: "No profile entries yet.",
+				profileEditBtn: "Edit profile",
 				profileSection: "Section",
 				profileKey: "Key",
 				profileValue: "Value",
 				profileAdd: "Add entry",
+				profileModalTitle: "Edit user profile",
+				profileColSection: "Section",
+				profileColKey: "Key",
+				profileColValue: "Value",
 				memoryHeader: "Memory & edit",
 				factsHeader: "Atomic facts",
 				factsEmpty: "No atomic facts yet.",
+				memoryEditBtn: "Edit memory",
+				memoryModalTitle: "Edit memory (atomic facts)",
 				factsColumns: "Subject / Predicate / Object / Type / Content (collapsed)",
+				colSubject: "Subject",
+				colPredicate: "Predicate",
+				colObject: "Object",
+				colContent: "Content",
+				colActions: "Actions",
+				newRowPlaceholder: "(new row, written on save)",
 				editSave: "Save changes",
 				factDelete: "Delete",
 				delete: "Delete",
+				saveAll: "Save all",
+				cancel: "Cancel",
+				addRow: "Add row",
+				close: "Close",
+				saving: "Saving…",
 				memoryMdHeader: "memory.md memory view",
 				memoryMdDesc: "View the read-only memory.md that is injected into the session system prompt.",
 				memoryMdOpen: "View memory.md",
@@ -302,29 +384,52 @@ window.__ModuleLoader__.load({
 		* `MemorySettingsSection.tsx`.
 		*/
 		const memorySettingsStyleText = `
-.atom-memory-section{display:flex;flex-direction:column;gap:18px;max-width:720px}
-.atom-memory-header h2{margin:0 0 4px;font-size:20px}
-.atom-memory-header p{margin:0;color:var(--dsh-text-muted,#8a8f98);font-size:13px}
-.atom-memory-error{padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--dsh-danger,#e5484d) 12%,transparent);color:var(--dsh-danger,#e5484d);font-size:13px}
-.atom-memory-status{padding:6px 12px;border-radius:8px;background:color-mix(in srgb,var(--dsh-accent,#5b8def) 12%,transparent);font-size:13px}
-.atom-memory-block{display:flex;flex-direction:column;gap:8px;margin:0;padding:12px 14px;border:1px solid var(--dsh-border,#33363d);border-radius:10px}
-.atom-memory-block legend{font-weight:600;padding:0 4px}
-.atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer}
+.atom-memory-section{display:flex;flex-direction:column;gap:18px;max-width:760px}
+.atom-memory-header h2{margin:0 0 4px;font-size:20px;color:var(--dsw-alias-label-primary,#e6e8eb)}
+.atom-memory-header p{margin:0;color:var(--dsw-alias-label-secondary,#8a8f98);font-size:13px}
+.atom-memory-error{padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 12%,transparent);color:var(--dsw-alias-state-error-primary,#e5484d);font-size:13px}
+.atom-memory-status{padding:6px 12px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#46a758) 12%,transparent);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px}
+.atom-memory-block{display:flex;flex-direction:column;gap:8px;margin:0;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#1f2126)}
+.atom-memory-block legend{font-weight:600;padding:0 4px;color:var(--dsw-alias-label-primary,#e6e8eb)}
+.atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-inputs{display:flex;gap:8px;margin-top:4px}
-.atom-memory-inputs input,.atom-memory-fact-fields input,.atom-memory-fact-fields textarea{flex:1;padding:6px 8px;border:1px solid var(--dsh-border,#3a3d44);border-radius:6px;background:var(--dsh-surface-2,#24262b);color:var(--dsh-text,#e6e8eb);font-size:13px;min-width:0;box-sizing:border-box}
+.atom-memory-inputs input,.atom-memory-fact-fields input,.atom-memory-fact-fields textarea{flex:1;padding:6px 8px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px;min-width:0;box-sizing:border-box}
 .atom-memory-fact-fields textarea{min-height:40px;resize:vertical;flex-basis:100%}
-.atom-memory-hint{margin:0;color:var(--dsh-text-muted,#8a8f98);font-size:12px}
-.atom-memory-empty{color:var(--dsh-text-muted,#8a8f98);font-size:13px;margin:0}
-.atom-memory-add{align-self:flex-start;padding:5px 12px;border:1px solid var(--dsh-border,#3a3d44);border-radius:6px;background:var(--dsh-surface-2,#24262b);color:var(--dsh-text,#e6e8eb);cursor:pointer;font-size:13px}
+.atom-memory-hint{margin:0;color:var(--dsw-alias-label-secondary,#8a8f98);font-size:12px}
+.atom-memory-empty{color:var(--dsw-alias-label-secondary,#8a8f98);font-size:13px;margin:0}
+.atom-memory-add{align-self:flex-start;padding:5px 12px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,0.08));color:var(--dsw-alias-label-primary,#e6e8eb);cursor:pointer;font-size:13px}
 .atom-memory-actions{display:flex;gap:10px;align-items:center}
-.atom-memory-actions button,.atom-memory-file-label{padding:6px 14px;border:1px solid var(--dsh-border,#3a3d44);border-radius:6px;background:var(--dsh-surface-2,#24262b);color:var(--dsh-text,#e6e8eb);cursor:pointer;font-size:13px;display:inline-block}
+.atom-memory-actions button,.atom-memory-file-label{padding:6px 14px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,0.08));color:var(--dsw-alias-label-primary,#e6e8eb);cursor:pointer;font-size:13px;display:inline-block}
 .atom-memory-file-label input{display:none}
-.atom-memory-fact-row{display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:8px;background:var(--dsh-surface-1,#1f2126)}
-.atom-memory-badge{font-family:var(--dsh-font-mono,monospace);font-size:11px;color:var(--dsh-text-muted,#8a8f98)}
+.atom-memory-fact-row{display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#24262b)}
+.atom-memory-badge{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;color:var(--dsw-alias-label-secondary,#8a8f98)}
 .atom-memory-fact-fields{display:flex;flex-wrap:wrap;gap:6px}
 .atom-memory-row-actions{display:flex;gap:8px;justify-content:flex-end}
-.atom-memory-row-btn{padding:4px 10px;border:1px solid var(--dsh-border,#3a3d44);border-radius:6px;background:var(--dsh-surface-2,#24262b);color:var(--dsh-text,#e6e8eb);cursor:pointer;font-size:12px}
-.atom-memory-memory-md{max-height:320px;overflow:auto;margin:0;padding:10px 12px;border:1px solid var(--dsh-border,#3a3d44);border-radius:8px;background:var(--dsh-surface-1,#1f2126);color:var(--dsh-text,#e6e8eb);font-family:var(--dsh-font-mono,monospace);font-size:12px;white-space:pre-wrap;word-break:break-word}
+.atom-memory-memory-md{max-height:320px;overflow:auto;margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:12px;white-space:pre-wrap;word-break:break-word}
+
+/* Buttons follow the system theme via the harness design tokens (light/dark aware). */
+.atom-memory-row-btn,.atom-memory-btn{padding:5px 12px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,0.08));color:var(--dsw-alias-label-primary,#e6e8eb);cursor:pointer;font-size:13px}
+.atom-memory-row-btn:hover,.atom-memory-btn:hover,.atom-memory-add:hover,.atom-memory-actions button:hover{background:var(--dsw-alias-interactive-bg-hover-accent,rgba(255,255,255,0.16))}
+.atom-memory-btn-primary{padding:6px 16px;border:none;border-radius:6px;background:var(--dsw-alias-button-primary-fill,rgb(65,118,230));color:var(--dsw-alias-label-primary-foreground,#ffffff);font-weight:600;cursor:pointer;font-size:13px}
+.atom-memory-btn-primary:disabled,.atom-memory-btn:disabled,.atom-memory-row-btn:disabled{opacity:.5;cursor:not-allowed}
+.atom-memory-btn-danger{color:var(--dsw-alias-state-error-primary,#e5484d);border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 50%,transparent)}
+.atom-memory-btn-row-delete{flex:none;padding:4px 10px;border:1px solid color-mix(in srgb,var(--dsw-alias-state-error-primary,#e5484d) 50%,transparent);border-radius:6px;background:transparent;color:var(--dsw-alias-state-error-primary,#e5484d);cursor:pointer;font-size:12px}
+
+/* Modal overlay. */
+.atom-memory-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,0.5))}
+.atom-memory-modal{display:flex;flex-direction:column;width:min(720px,92vw);max-height:82vh;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:12px;background:var(--dsw-alias-bg-layer-3,#24262b);box-shadow:0 18px 48px rgba(0,0,0,0.4);overflow:hidden}
+.atom-memory-modal-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12))}
+.atom-memory-modal-header h3{margin:0;font-size:15px;color:var(--dsw-alias-label-primary,#e6e8eb)}
+.atom-memory-modal-body{overflow:auto;padding:12px 16px}
+.atom-memory-modal-footer{display:flex;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12))}
+
+/* Excel-like editable table. */
+.atom-memory-editor{width:100%;border-collapse:collapse;font-size:13px}
+.atom-memory-editor th{position:sticky;top:0;text-align:left;padding:8px;border-bottom:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));color:var(--dsw-alias-label-secondary,#8a8f98);font-weight:600;background:var(--dsw-alias-bg-layer-2,#24262b)}
+.atom-memory-editor td{padding:5px 6px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,0.06));vertical-align:middle}
+.atom-memory-editor input,.atom-memory-editor textarea{width:100%;box-sizing:border-box;padding:5px 7px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:5px;background:var(--dsw-alias-bg-layer-1,#1f2126);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px}
+.atom-memory-editor textarea{min-height:34px;resize:vertical}
+.atom-memory-editor-row-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end;white-space:nowrap}
 `;
 		/** Ensure the stylesheet is present exactly once (data-plugin guarded). */
 		function ensureMemorySettingsStyle() {
@@ -365,19 +470,30 @@ window.__ModuleLoader__.load({
 			factFields: "atom-memory-fact-fields",
 			rowActions: "atom-memory-row-actions",
 			rowBtn: "atom-memory-row-btn",
-			memoryMdView: "atom-memory-memory-md"
+			btn: "atom-memory-btn",
+			btnPrimary: "atom-memory-btn-primary",
+			btnDanger: "atom-memory-btn-danger",
+			btnRowDelete: "atom-memory-btn-row-delete",
+			memoryMdView: "atom-memory-memory-md",
+			overlay: "atom-memory-overlay",
+			modal: "atom-memory-modal",
+			modalHeader: "atom-memory-modal-header",
+			modalBody: "atom-memory-modal-body",
+			modalFooter: "atom-memory-modal-footer",
+			editor: "atom-memory-editor",
+			editorRowActions: "atom-memory-editor-row-actions"
 		};
 		function MemorySettingsSection(props) {
 			const { t } = props;
 			const state = props.useMemorySettings((snapshot) => snapshot);
 			const [status, setStatus] = (0, react.useState)();
 			const [phase, setPhase] = (0, react.useState)("idle");
-			const [memoryMdOpen, setMemoryMdOpen] = (0, react.useState)(false);
+			const [modal, setModal] = (0, react.useState)();
 			const [memoryMdBusy, setMemoryMdBusy] = (0, react.useState)(false);
-			const toggleMemoryMd = () => {
-				const next = !memoryMdOpen;
-				setMemoryMdOpen(next);
-				if (next && state.data.memoryMd === void 0) {
+			const [modelManual, setModelManual] = (0, react.useState)(() => Boolean(state.section.extractionModel?.provider || state.section.extractionModel?.model));
+			const openMemoryMd = () => {
+				setModal("memoryMd");
+				if (state.data.memoryMd === void 0) {
 					setMemoryMdBusy(true);
 					props.fetchMemoryMd().finally(() => setMemoryMdBusy(false));
 				}
@@ -412,27 +528,18 @@ window.__ModuleLoader__.load({
 						disabled: busy || memoryMdBusy,
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("memoryMdHeader") }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: css.btn,
+								style: { alignSelf: "flex-start" },
+								disabled: busy || memoryMdBusy,
+								onClick: openMemoryMd,
+								children: t("memoryMdOpen")
+							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 								className: css.hint,
 								children: t("memoryMdDesc")
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-								className: css.rowActions,
-								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-									type: "button",
-									className: css.rowBtn,
-									disabled: busy || memoryMdBusy,
-									onClick: toggleMemoryMd,
-									children: memoryMdOpen ? t("memoryMdClose") : t("memoryMdOpen")
-								})
-							}),
-							memoryMdOpen && (state.data.memoryMd === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-								className: css.hint,
-								children: memoryMdBusy ? t("memoryMdLoading") : t("memoryMdEmpty")
-							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("pre", {
-								className: css.memoryMdView,
-								children: state.data.memoryMd
-							}))
+							})
 						]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
@@ -459,8 +566,9 @@ window.__ModuleLoader__.load({
 								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 									type: "radio",
 									name: "extraction-model-mode",
-									checked: !state.section.extractionModel?.provider,
+									checked: !modelManual,
 									onChange: () => {
+										setModelManual(false);
 										props.setExtractionModel("", "");
 									}
 								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("modelFollowDefault") })]
@@ -470,10 +578,8 @@ window.__ModuleLoader__.load({
 								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
 									type: "radio",
 									name: "extraction-model-mode",
-									checked: Boolean(state.section.extractionModel?.provider),
-									onChange: () => {
-										props.setExtractionModel(state.section.extractionModel?.provider || "", state.section.extractionModel?.model || "");
-									}
+									checked: modelManual,
+									onChange: () => setModelManual(true)
 								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("modelManual") })]
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -506,49 +612,37 @@ window.__ModuleLoader__.load({
 							profile.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 								className: css.empty,
 								children: t("profileEmpty")
-							}) : profile.map((row, index) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ProfileRow, {
-								t,
-								row,
-								onSave: (d) => {
-									props.upsertProfile(d.section, d.key, d.value);
-								},
-								onDelete: () => {
-									props.deleteProfile(row.section, row.key);
-								}
-							}, `${row.section}:${row.key}:${index}`)),
+							}) : null,
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 								type: "button",
-								className: css.add,
-								onClick: () => {
-									props.upsertProfile("", "", "");
-								},
-								children: t("profileAdd")
+								className: css.btn,
+								style: { alignSelf: "flex-start" },
+								onClick: () => setModal("profile"),
+								children: t("profileEditBtn")
 							})
 						]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
 						className: css.block,
 						disabled: busy,
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("legend", { children: [
-							t("memoryHeader"),
-							" · ",
-							t("factsHeader")
-						] }), facts.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-							className: css.empty,
-							children: t("factsEmpty")
-						}) : facts.map((fact) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FactRow, {
-							t,
-							fact,
-							onSave: (d) => {
-								props.saveFact({
-									...fact,
-									...d
-								});
-							},
-							onDelete: () => {
-								props.deleteFact(fact.fact_id);
-							}
-						}, fact.fact_id))]
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("legend", { children: [
+								t("memoryHeader"),
+								" · ",
+								t("factsHeader")
+							] }),
+							facts.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: css.empty,
+								children: t("factsEmpty")
+							}) : null,
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: css.btn,
+								style: { alignSelf: "flex-start" },
+								onClick: () => setModal("facts"),
+								children: t("memoryEditBtn")
+							})
+						]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
 						className: css.block,
@@ -612,114 +706,269 @@ window.__ModuleLoader__.load({
 								})]
 							})
 						]
-					})
+					}),
+					modal === "memoryMd" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MemoryMdModal, {
+						t,
+						busy: memoryMdBusy,
+						content: state.data.memoryMd,
+						onClose: () => setModal(void 0)
+					}) : null,
+					modal === "facts" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FactsEditorModal, {
+						t,
+						initial: facts,
+						onSave: (rows) => props.saveAllFacts(rows),
+						onClose: () => setModal(void 0)
+					}) : null,
+					modal === "profile" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ProfileEditorModal, {
+						t,
+						initial: profile,
+						onSave: (rows) => props.saveAllProfile(rows),
+						onClose: () => setModal(void 0)
+					}) : null
 				]
 			});
 		}
-		function FactRow(props) {
-			const { t, fact } = props;
-			const [draft, setDraft] = (0, react.useState)(() => ({
-				fact_id: fact.fact_id,
-				subject: fact.subject,
-				predicate: fact.predicate,
-				object: fact.object,
-				content: fact.content ?? ""
-			}));
-			const set = (patch) => setDraft((prev) => ({
-				...prev,
-				...patch
-			}));
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: css.factRow,
-				children: [
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-						className: css.badge,
-						children: draft.fact_id.slice(0, 8)
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						className: css.factFields,
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: draft.subject,
-								onChange: (e) => set({ subject: e.currentTarget.value })
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: draft.predicate,
-								onChange: (e) => set({ predicate: e.currentTarget.value })
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: draft.object,
-								onChange: (e) => set({ object: e.currentTarget.value })
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("textarea", {
-								value: draft.content,
-								onChange: (e) => set({ content: e.currentTarget.value })
-							})
-						]
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						className: css.rowActions,
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-							type: "button",
-							className: css.rowBtn,
-							onClick: () => props.onSave(draft),
-							children: t("editSave")
-						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-							type: "button",
-							className: css.rowBtn,
-							onClick: props.onDelete,
-							children: t("factDelete")
-						})]
-					})
-				]
-			});
-		}
-		function ProfileRow(props) {
-			const { t, row } = props;
-			const [draft, setDraft] = (0, react.useState)(() => ({
-				section: row.section,
-				key: row.key,
-				value: row.value,
-				newRow: false
-			}));
-			const set = (patch) => setDraft((prev) => ({
-				...prev,
-				...patch
-			}));
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: css.factRow,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-					className: css.factFields,
+		/** A simple themed centered modal shell (header + scrollable body + footer). */
+		function Modal(props) {
+			const { t, title, children, footer, onClose } = props;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				className: css.overlay,
+				onClick: onClose,
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					className: css.modal,
+					role: "dialog",
+					"aria-modal": "true",
+					onClick: (e) => e.stopPropagation(),
 					children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-							value: draft.section,
-							placeholder: t("profileSection"),
-							onChange: (e) => set({ section: e.currentTarget.value })
+						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: css.modalHeader,
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h3", { children: title }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: css.btn,
+								onClick: onClose,
+								children: t("close")
+							})]
 						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-							value: draft.key,
-							placeholder: t("profileKey"),
-							onChange: (e) => set({ key: e.currentTarget.value })
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							className: css.modalBody,
+							children
 						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-							value: draft.value,
-							placeholder: t("profileValue"),
-							onChange: (e) => set({ value: e.currentTarget.value })
-						})
+						footer ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							className: css.modalFooter,
+							children: footer
+						}) : null
 					]
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-					className: css.rowActions,
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-						type: "button",
-						className: css.rowBtn,
-						onClick: () => props.onSave(draft),
-						children: t("editSave")
-					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-						type: "button",
-						className: css.rowBtn,
-						onClick: props.onDelete,
-						children: t("delete")
-					})]
+				})
+			});
+		}
+		/** The memory.md viewer modal (read-only). */
+		function MemoryMdModal(props) {
+			const { t, busy, content, onClose } = props;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Modal, {
+				t,
+				title: t("memoryMdHeader"),
+				onClose,
+				children: busy && content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+					className: css.hint,
+					children: t("memoryMdLoading")
+				}) : content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+					className: css.empty,
+					children: t("memoryMdEmpty")
+				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("pre", {
+					className: css.memoryMdView,
+					children: content
+				})
+			});
+		}
+		/** Modal editor for atomic facts: Excel-like editable table + single save all. */
+		function FactsEditorModal(props) {
+			const { t, initial, onSave, onClose } = props;
+			const [rows, setRows] = (0, react.useState)(() => initial.map((f) => ({
+				fact_id: f.fact_id,
+				subject: f.subject,
+				predicate: f.predicate,
+				object: f.object,
+				content: f.content ?? "",
+				type: f.type,
+				deleted: false
+			})));
+			const [saving, setSaving] = (0, react.useState)(false);
+			const setRow = (index, patch) => setRows((prev) => prev.map((r, i) => i === index ? {
+				...r,
+				...patch
+			} : r));
+			const addRow = () => setRows((prev) => [...prev, {
+				fact_id: "",
+				subject: "",
+				predicate: "",
+				object: "",
+				content: "",
+				deleted: false
+			}]);
+			const save = () => {
+				setSaving(true);
+				Promise.resolve(onSave(rows)).finally(() => {
+					setSaving(false);
+					onClose();
+				});
+			};
+			const footer = /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+				type: "button",
+				className: css.btn,
+				onClick: onClose,
+				disabled: saving,
+				children: t("cancel")
+			}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+				type: "button",
+				className: css.btnPrimary,
+				onClick: save,
+				disabled: saving,
+				children: saving ? t("saving") : t("saveAll")
+			})] });
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(Modal, {
+				t,
+				title: t("memoryModalTitle"),
+				footer,
+				onClose,
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("table", {
+					className: css.editor,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", { children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colSubject") }),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colPredicate") }),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colObject") }),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colContent") }),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colActions") })
+					] }) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("tbody", { children: rows.map((row, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", {
+						style: row.deleted ? { opacity: .45 } : void 0,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								value: row.subject,
+								disabled: row.deleted,
+								placeholder: t("newRowPlaceholder"),
+								onChange: (e) => setRow(i, { subject: e.currentTarget.value })
+							}) }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								value: row.predicate,
+								disabled: row.deleted,
+								onChange: (e) => setRow(i, { predicate: e.currentTarget.value })
+							}) }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								value: row.object,
+								disabled: row.deleted,
+								onChange: (e) => setRow(i, { object: e.currentTarget.value })
+							}) }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("textarea", {
+								value: row.content ?? "",
+								disabled: row.deleted,
+								onChange: (e) => setRow(i, { content: e.currentTarget.value })
+							}) }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: css.editorRowActions,
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: css.btnRowDelete,
+									onClick: () => setRow(i, { deleted: !row.deleted }),
+									children: row.deleted ? t("addRow") : t("factDelete")
+								})
+							}) })
+						]
+					}, row.fact_id || `new-${i}`)) })]
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+					type: "button",
+					className: css.add,
+					style: { marginTop: 10 },
+					onClick: addRow,
+					children: t("addRow")
+				})]
+			});
+		}
+		/** Modal editor for the user profile: Excel-like editable table + single save all. */
+		function ProfileEditorModal(props) {
+			const { t, initial, onSave, onClose } = props;
+			const [rows, setRows] = (0, react.useState)(() => initial.map((r) => ({
+				section: r.section,
+				key: r.key,
+				value: r.value,
+				deleted: false
+			})));
+			const [saving, setSaving] = (0, react.useState)(false);
+			const setRow = (index, patch) => setRows((prev) => prev.map((r, i) => i === index ? {
+				...r,
+				...patch
+			} : r));
+			const addRow = () => setRows((prev) => [...prev, {
+				section: "",
+				key: "",
+				value: "",
+				deleted: false
+			}]);
+			const save = () => {
+				setSaving(true);
+				Promise.resolve(onSave(rows)).finally(() => {
+					setSaving(false);
+					onClose();
+				});
+			};
+			const footer = /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+				type: "button",
+				className: css.btn,
+				onClick: onClose,
+				disabled: saving,
+				children: t("cancel")
+			}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+				type: "button",
+				className: css.btnPrimary,
+				onClick: save,
+				disabled: saving,
+				children: saving ? t("saving") : t("saveAll")
+			})] });
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(Modal, {
+				t,
+				title: t("profileModalTitle"),
+				footer,
+				onClose,
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("table", {
+					className: css.editor,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", { children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColSection") }),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColKey") }),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColValue") }),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colActions") })
+					] }) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("tbody", { children: rows.map((row, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", {
+						style: row.deleted ? { opacity: .45 } : void 0,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								value: row.section,
+								disabled: row.deleted,
+								onChange: (e) => setRow(i, { section: e.currentTarget.value })
+							}) }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								value: row.key,
+								disabled: row.deleted,
+								onChange: (e) => setRow(i, { key: e.currentTarget.value })
+							}) }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								value: row.value,
+								disabled: row.deleted,
+								onChange: (e) => setRow(i, { value: e.currentTarget.value })
+							}) }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: css.editorRowActions,
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: css.btnRowDelete,
+									onClick: () => setRow(i, { deleted: !row.deleted }),
+									children: row.deleted ? t("addRow") : t("factDelete")
+								})
+							}) })
+						]
+					}, `${row.section}:${row.key}:${i}`)) })]
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+					type: "button",
+					className: css.add,
+					style: { marginTop: 10 },
+					onClick: addRow,
+					children: t("addRow")
 				})]
 			});
 		}

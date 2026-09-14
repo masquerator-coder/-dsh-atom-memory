@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added (第二轮 UI 反馈)
+1. **按钮跟随系统颜色**：此前样式用了自造的 `var(--dsh-surface-2,#24262b)` 等
+   写死深色回退值，导致任何主题下按钮都是黑色。改为 dsh 设计令牌
+   `--dsw-alias-*`（随 `body[data-ds-dark-theme]` 在亮/暗间切换）：
+   文本 `label-primary/secondary`、边框 `border-l2/l3`、按钮底
+   `button-primary-fill` / `interactive-bg-hover`、危险用 `state-error-primary`。
+2. **「手动指定模型」无法选中**：radio 的 `checked` 原先由
+   `Boolean(provider)` 推导——provider 为空时点手动只会重新写回空值，
+   永远选不中。现在用本地 `modelManual` 状态控制选中；勾选「手动」即选中，
+   再填 provider/model 持久化。
+3. **memory.md 视图改为按钮在左、说明在下方、内容弹窗展示**
+   （取代此前的内联 `pre` 折叠）：点「查看 memory.md」打开只读弹窗。
+4. **User 画像编辑与记忆编辑改为按钮弹窗 + 类 Excel 表格编辑**：
+   各自一个「编辑画像 / 编辑记忆」按钮，打开模态弹窗；内部为可编辑表格
+   （记忆列：主语/谓词/宾语/内容；画像列：Section/Key/Value），
+   每行右侧「删除」按钮（可取消），可「添加一行」；底部仅一个
+   **保存全部**（`saveAllFacts` / `saveAllProfile`，编辑行逐个写回、
+   标记行软删除、最终统一刷新）加「取消/关闭」。
+
 ### Added
 - **记忆设置面板三处交互调整**（按用户反馈）：
   1. **记忆开关 / LLM 抽取模型置灰**：根因是宿主 `index.ts` 用同步 `ctx.get('settings')`

@@ -12,7 +12,7 @@
  * swallow into a blank panel surfaces here.
  */
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { render, screen, act, cleanup } from '@testing-library/react'
+import { render, screen, act, cleanup, fireEvent } from '@testing-library/react'
 import { createElement } from 'react'
 import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/with-selector'
 import { MemorySettingsController } from '../src/client/memory-settings-controller.ts'
@@ -31,7 +31,7 @@ function useSnapshotHook<T>(store: { getSnapshot(): T; subscribe(fn: () => void)
   }
 }
 
-function buildController() {
+function buildController(seedFacts = false) {
   const scope = {
     getSnapshot: () => ({
       status: 'ready' as const,
@@ -45,7 +45,12 @@ function buildController() {
     set: async () => {}, unset: async () => {}, mutate: async () => {},
   }
   const remote = {
-    listFacts: async () => ({ ok: true, value: { facts: [], total: 0 } }),
+    listFacts: async () => ({
+      ok: true,
+      value: seedFacts
+        ? { facts: [{ fact_id: 'f1', subject: '张三', predicate: '是', object: '工程师', content: '' }], total: 1 }
+        : { facts: [], total: 0 },
+    }),
     editFact: async () => ({ ok: true, value: {} }),
     deleteFact: async () => ({ ok: true, value: {} }),
     memoryMd: async () => ({ ok: true, value: '# memory.md\ntest' }),
@@ -58,40 +63,85 @@ function buildController() {
   return new MemorySettingsController(scope as never, remote as never)
 }
 
+function bind(controller: MemorySettingsController) {
+  const face = controller.inject()
+  const hooks = face.hooks as { memorySettings: { getSnapshot(): unknown; subscribe(fn: () => void): () => void } }
+  const useMemorySettings = useSnapshotHook(hooks.memorySettings)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const t = (key: string, params?: Record<string, unknown>) => {
+    const tmpl = (zh as Record<string, string | undefined>)[key]
+    if (tmpl === undefined) throw new Error(`missing locale key: ${key}`)
+    if (!params) return tmpl
+    return tmpl.replace(/\{(\w+)\}/g, (_s, k) => String((params as Record<string, unknown>)[k]))
+  }
+  const props = {
+    t: t as never,
+    useMemorySettings: useMemorySettings as never,
+    setEnabled: async () => {}, refreshData: face.refreshData,
+    setExtractionModel: face.setExtractionModel,
+    saveFact: face.saveFact, deleteFact: face.deleteFact,
+    upsertProfile: face.upsertProfile, deleteProfile: face.deleteProfile,
+    fetchMemoryMd: face.fetchMemoryMd,
+    saveAllFacts: face.saveAllFacts, saveAllProfile: face.saveAllProfile,
+    backup: face.backup, restore: face.restore,
+    close: () => {},
+  }
+  return { face, props }
+}
+
 const refreshData = vi.fn(async () => {})
-const setEnabled = vi.fn(async () => {})
 
 afterEach(cleanup)
 
 describe('MemorySettingsSection client render', () => {
   it('renders and runs effects without throwing', async () => {
     const controller = buildController()
-    const face = controller.inject()
-    const hooks = face.hooks as { memorySettings: { getSnapshot(): unknown; subscribe(fn: () => void): () => void } }
-    const useMemorySettings = useSnapshotHook(hooks.memorySettings)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const t = (key: string, params?: Record<string, unknown>) => {
-      const tmpl = (zh as Record<string, string | undefined>)[key]
-      if (tmpl === undefined) throw new Error(`missing locale key: ${key}`)
-      if (!params) return tmpl
-      return tmpl.replace(/\{(\w+)\}/g, (_s, k) => String((params as Record<string, unknown>)[k]))
-    }
-    const props = {
-      t: t as never,
-      useMemorySettings: useMemorySettings as never,
-      setEnabled, refreshData, setExtractionModel: face.setExtractionModel,
-      saveFact: face.saveFact, deleteFact: face.deleteFact, fetchMemoryMd: face.fetchMemoryMd,
-      upsertProfile: face.upsertProfile,
-      deleteProfile: face.deleteProfile, backup: face.backup, restore: face.restore,
-      close: () => {},
-    }
+    const { face, props } = bind(controller)
+    // Override the default refresh stub with an observable spy.
+    props.refreshData = refreshData
     await act(async () => {
       render(createElement(MemorySettingsSection, props))
     })
     expect(screen.getByText('记忆')).toBeTruthy()
     expect(screen.getByText('LLM 抽取模型')).toBeTruthy()
     expect(screen.getByText('查看 memory.md')).toBeTruthy()
+    expect(screen.getByText('编辑记忆')).toBeTruthy()
+    expect(screen.getByText('编辑画像')).toBeTruthy()
     expect(refreshData).toHaveBeenCalled()
     expect(screen.queryByText(LOCALE_NS + ':title')).toBeNull()
+  })
+
+  it('opens the memory.md view in a modal', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    // Not open initially.
+    expect(screen.queryByText(/# memory\.md/)).toBeNull()
+    await act(async () => {
+      fireEvent.click(screen.getByText('查看 memory.md'))
+    })
+    await act(async () => {})
+    expect(screen.getByText(/# memory\.md/)).toBeTruthy()
+  })
+
+  it('opens the facts editor as an Excel-like table with the saved data', async () => {
+    const controller = buildController(true)
+    const { props } = bind(controller)
+    // Let the real refreshData load the seeded fact into the store.
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    await act(async () => {})
+    await act(async () => {
+      fireEvent.click(screen.getByText('编辑记忆'))
+    })
+    await act(async () => {})
+    // The seeded fact row's subject is present as an editable cell value.
+    const subjectInput = screen.getByDisplayValue('张三')
+    expect(subjectInput).toBeTruthy()
+    // One save-all button, one 添加一行 button, one 取消 (close) button.
+    expect(screen.getAllByText('保存全部').length).toBeGreaterThan(0)
   })
 })
