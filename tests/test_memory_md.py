@@ -15,6 +15,10 @@ import re
 from atom_memory.db import connect_for_tests
 from atom_memory.models import NEUTRAL_SCORE
 from atom_memory.memory_md import (
+    _DETAIL_CONTENT_CHARS,
+    _MAX_COMPACT_LINE_CHARS,
+    _MAX_DETAIL_FIELD_CHARS,
+    _MAX_FOLDED_VALUE_CHARS,
     _RECENCY_HALF_LIFE_SECONDS,
     generate_memory_md,
 )
@@ -137,6 +141,144 @@ def test_detail_renders_knowledge_body():
         )
         md = _md(conn, detail=True)
         assert "不能在没测试的情况下直接上线" in md
+    finally:
+        conn.close()
+
+
+# ---- per-line length cap -----------------------------------------------------
+
+
+def _bullet_lines(md: str) -> list[str]:
+    """Return the rendered content lines (the ones the reader/model actually reads)."""
+    return [line for line in md.splitlines() if line.startswith("- ")]
+
+
+def test_compact_line_cap_bounds_every_rendered_line():
+    """每条注入行都被限制在 80 字符内，无论它由什么拼成。
+
+    Covers every compact line shape at once: a folded attribute, a folded
+    preference list, a knowledge-body headline, and an episodic line with a
+    ``[when]`` prefix.
+    """
+    conn = connect_for_tests()
+    try:
+        _insert_fact(conn, "a", "属性", "值" * 400)
+        _insert_fact(conn, "b", "偏好", "长偏好" * 200)
+        _insert_fact(
+            conn, "c", "教训", "标题", memory_type="lesson", content="正文" * 500,
+        )
+        _insert_fact(
+            conn, "d", "事件", "发生了一件很长的" * 40,
+            memory_type="episodic", qualifiers='{"when": "2026-02-01"}',
+        )
+        md = _md(conn)
+
+        lines = _bullet_lines(md)
+        assert len(lines) >= 4
+        for line in lines:
+            assert len(line) <= _MAX_COMPACT_LINE_CHARS, (len(line), line)
+    finally:
+        conn.close()
+
+
+def test_compact_line_cap_does_not_touch_short_folds():
+    """短值的折叠行不受影响：每个值都仍然可见。"""
+    conn = connect_for_tests()
+    try:
+        _insert_fact(conn, "f1", "偏好", "黑咖啡", created_at=3000)
+        _insert_fact(conn, "f2", "偏好", "少糖", created_at=2000)
+        _insert_fact(conn, "f3", "偏好", "深色主题", created_at=1000)
+        md = _md(conn)
+
+        line = next(l for l in _bullet_lines(md) if l.startswith("- 黑咖啡"))
+        assert "少糖" in line
+        assert "深色主题" in line
+        assert len(line) <= _MAX_COMPACT_LINE_CHARS
+    finally:
+        conn.close()
+
+
+def test_compact_line_cap_clips_a_runaway_value_before_folding():
+    """超长值先被单独截断，不会独占整行而让同谓词的其他值彻底消失。
+
+    The point of clipping values *before* joining them: without it the line cap
+    would consume the entire line with the first value and the reader would never
+    learn that a second value exists.
+    """
+    conn = connect_for_tests()
+    try:
+        _insert_fact(conn, "f1", "部署路径", "A" * 400, created_at=2000)
+        _insert_fact(conn, "f2", "部署路径", "B" * 400, created_at=1000)
+        md = _md(conn)
+
+        line = next(l for l in _bullet_lines(md) if l.startswith("- 部署路径"))
+        assert len(line) <= _MAX_COMPACT_LINE_CHARS
+        values = line.split(": ", 1)[1].split("、")
+        assert len(values) >= 2, line
+        for value in values:
+            assert len(value) <= _MAX_FOLDED_VALUE_CHARS, value
+    finally:
+        conn.close()
+
+
+def test_detail_clips_each_field_and_keeps_the_fact_id_readable():
+    """完整版逐字段限长，但 fact_id 与结构保持完整——它才是这一层存在的理由。"""
+    conn = connect_for_tests()
+    try:
+        _insert_fact(
+            conn, "f1", "P" * 400, "O" * 400, subject="S" * 400,
+        )
+        md = _md(conn, detail=True)
+
+        line = next(l for l in md.splitlines() if l.startswith("- ["))
+        assert line.startswith("- [f1] ")
+        assert "S" * (_MAX_DETAIL_FIELD_CHARS + 1) not in line
+        assert "P" * (_MAX_DETAIL_FIELD_CHARS + 1) not in line
+        assert "O" * (_MAX_DETAIL_FIELD_CHARS + 1) not in line
+        # The clipped fields are still marked as clipped.
+        assert line.count("…") == 3
+    finally:
+        conn.close()
+
+
+def test_detail_clips_the_knowledge_body_subline():
+    """完整版的知识正文折叠行同样限长。"""
+    conn = connect_for_tests()
+    try:
+        _insert_fact(
+            conn, "f1", "教训", "短", memory_type="lesson", content="正文" * 300,
+        )
+        md = _md(conn, detail=True)
+
+        sub = next(l for l in md.splitlines() if "知识内容" in l)
+        snippet = sub.split("知识内容** ", 1)[1]
+        assert len(snippet) <= _DETAIL_CONTENT_CHARS
+    finally:
+        conn.close()
+
+
+def test_line_cap_keeps_one_long_memory_from_crowding_out_others():
+    """限长的实际收益：一条超长记忆不再挤掉同一预算下的其他记忆。"""
+    conn = connect_for_tests()
+    try:
+        # One runaway knowledge body plus four ordinary facts.
+        _insert_fact(
+            conn, "big", "教训", "巨大教训", memory_type="lesson",
+            content="很长的正文" * 500, created_at=9000,
+        )
+        for index in range(4):
+            _insert_fact(
+                conn, f"n{index}", "属性", f"普通值{index}",
+                memory_type="semantic", created_at=1000 + index,
+            )
+        md = _md(conn, max_tokens=200)
+
+        lines = _bullet_lines(md)
+        assert all(len(line) <= _MAX_COMPACT_LINE_CHARS for line in lines)
+        # The four ordinary facts are all still represented.
+        for index in range(4):
+            assert f"普通值{index}" in md, index
+        assert estimate_tokens(md) <= 200
     finally:
         conn.close()
 

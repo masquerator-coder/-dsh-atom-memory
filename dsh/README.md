@@ -118,6 +118,14 @@ memory_summary（概览：聚合摘要 + 覆盖的 fact_id + 未展开长文知�
 > `injectedMemoryMdTokens`。`fact_id` 仍可经 `memory_recall`、`memory_memory_md`
 > 与设置界面取得。
 >
+> **每行长度上限（保证记忆精炼）**：注入版**每一条渲染行整体**不超过
+> **80 字符**（`_MAX_COMPACT_LINE_CHARS`，`- ` 前缀、`[when]`、`predicate:` 与值都算在内，
+> 省略号也计入上限），因此任何行形都逃不出这个唯一的收口点；折叠行里的**单个值**先各自
+> 截到 **40 字符**（`_MAX_FOLDED_VALUE_CHARS`）再拼接，避免一个超长值独占整行而让同谓词的
+> 其他值彻底不可见。完整版逐字段截到 **120 字符**（`subject`/`predicate`/`object` 与
+> `> 知识内容` 子行），但 **`fact_id` 与条目结构永不截断**——按 id 定位正是这一层的用途。
+> 存储不受影响：`recall` 返回未截断的 `object`/`content`。
+>
 > **预算收紧时保留什么**：每条事实按「重要度 × 近期」混合打分
 > （`memory_md.py`：`_IMPORTANCE_WEIGHT = 0.7`、`_RECENCY_WEIGHT = 0.3`，
 > 近期以「相对最新一条」的半衰期 14 天计），预算不足时**全局**从分值最低的行开始放弃。

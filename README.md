@@ -135,8 +135,8 @@ from one implementation (`memory_md.generate_memory_md`):
 
 | Depth | Used by | Shape |
 | --- | --- | --- |
-| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** and the settings **"view memory.md" dialog** | Facts grouped by memory type, ordered by a blend of importance and recency; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; long knowledge bodies truncated to 80 chars; no document title. |
-| `detail=True` (detail) | the `memory_memory_md` tool | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line (truncated to 120 chars); the header line is not truncated. |
+| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** and the settings **"view memory.md" dialog** | Facts grouped by memory type, ordered by a blend of importance and recency; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; **every rendered line capped at 80 characters** (`_MAX_COMPACT_LINE_CHARS`, ellipsis included), with folded values clipped to 40 characters each *before* joining (`_MAX_FOLDED_VALUE_CHARS`) so one runaway value cannot hide its siblings; no document title. |
+| `detail=True` (detail) | the `memory_memory_md` tool | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line. Each of `subject` / `predicate` / `object` is clipped to 120 characters (`_MAX_DETAIL_FIELD_CHARS`) and the body sub-line to 120 (`_DETAIL_CONTENT_CHARS`) — the `fact_id` and the bullet structure are never truncated, because locating a fact by id is what this depth is for. |
 
 Both read paths that a human inspects are therefore *the model's own view*: the
 dialog asks for the compact depth so the panel cannot drift from what the
@@ -182,6 +182,26 @@ already-frozen sessions keep their byte-identical text and their KV cache.
 700 tokens, more than they carry information for the model, while every fact
 stays addressable through `recall` (which returns `fact_id`), the
 `memory_memory_md` tool, and the settings editor.
+
+### Per-line length cap
+
+Both depths bound the size of every line they render, so a memory stays a
+recognisable headline instead of a paragraph:
+
+| Depth | Cap | Applies to |
+| --- | --- | --- |
+| compact | 80 chars | **every rendered content line, as a whole** — the `- ` marker, any `[when]` prefix, a `predicate:`, and the values all count toward it. This is the one choke point (`_render_section_lines`), so no line shape can escape it. |
+| compact | 40 chars | each value *inside* a folded line, applied before joining, so one long value cannot consume the line and hide every sibling value. |
+| detail | 120 chars | each of `subject` / `predicate` / `object`, plus the `> 知识内容` sub-line. The `fact_id` and the bullet structure are never truncated. |
+
+Clipping marks the cut with `…`, and the ellipsis is counted **inside** the cap,
+so `len(line) <= cap` holds for every rendered line. Nothing is lost from the
+store: `recall` returns the untruncated `content` and `object`, and the detail
+depth shows 120 characters of each field.
+
+Capping lines also *raises* what a budget can hold — truncating the padding
+leaves room for more memories. On the real 95-fact store the injected snapshot
+fits 49 lines at 1500 tokens, against 46 before the cap existed.
 
 ### `recall` return shape
 

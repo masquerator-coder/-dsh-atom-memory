@@ -49,13 +49,34 @@ from .models import (
 from .retriever import estimate_tokens
 from .validator import MULTI_VALUED_PREDICATES
 
-# Maximum characters of a knowledge body rendered in compact mode. The full body
-# stays in the store and is reachable via ``recall`` (which returns ``content``),
-# so the injected view only needs enough to recognise what the fact is.
-_COMPACT_CONTENT_CHARS = 80
+# Maximum characters of a rendered *content line* in the compact digest.
+#
+# This is the per-line cap, and it is what keeps the view 精炼 (concise): every
+# line the model reads — a knowledge body, an attribute ``predicate: value``, a
+# folded preference list — is bounded, so one runaway value can never crowd
+# several other memories out of the token budget, and every entry is forced to
+# stay a recognisable headline rather than a paragraph.
+#
+# The full text always stays in the store and is reachable through ``recall``
+# (which returns ``content``) and the detail depth, so clipping here costs the
+# model nothing but the padding.
+_MAX_COMPACT_LINE_CHARS = 80
 
-# Maximum characters of a knowledge body rendered in detail mode.
+# Maximum characters of one value *inside* a folded line, applied before the
+# values are joined. Without it a single long value would consume the whole line
+# and the cap would silently hide every sibling value; clipping each value first
+# keeps them all visible (each shorter) and the line cap then bounds the total.
+_MAX_FOLDED_VALUE_CHARS = 40
+
+# Maximum characters of a knowledge body rendered on the detail depth's folded
+# ``> 知识内容`` sub-line.
 _DETAIL_CONTENT_CHARS = 120
+
+# Maximum characters of a single *field* (subject / predicate / object) on the
+# detail depth. The detail depth exists so a human can locate a fact by its
+# ``fact_id`` and edit it, so its structure is preserved and only the payloads of
+# its fields are clipped — a long field must not push the ``fact_id`` out of view.
+_MAX_DETAIL_FIELD_CHARS = 120
 
 # -- ranking ------------------------------------------------------------------
 #
@@ -348,12 +369,18 @@ def _render_section_lines(section: str, facts: List[dict]) -> List[Tuple[str, fl
     lines (see :func:`_fold_preferences` / :func:`_attribute_lines`) therefore
     inherit their strongest member's score: a line is worth as much as the best
     thing it stands for.
+
+    Every line is finally clipped to :data:`_MAX_COMPACT_LINE_CHARS`. This single
+    choke point is deliberate — it is the one place that guarantees *any* line the
+    model reads is bounded, whatever it was built from.
     """
     if section == "preference":
-        return [(f"- {line}", score) for line, score in _fold_preferences(facts)]
-    if section == "attribute":
-        return [(f"- {line}", score) for line, score in _attribute_lines(facts)]
-    return [(_render_fact_line(section, fact), fact["score"]) for fact in facts]
+        lines = [(f"- {text}", score) for text, score in _fold_preferences(facts)]
+    elif section == "attribute":
+        lines = [(f"- {text}", score) for text, score in _attribute_lines(facts)]
+    else:
+        lines = [(_render_fact_line(section, fact), fact["score"]) for fact in facts]
+    return [(_clip(text, _MAX_COMPACT_LINE_CHARS), score) for text, score in lines]
 
 
 def _fold_preferences(facts: List[dict]) -> List[Tuple[str, float]]:
@@ -363,8 +390,8 @@ def _fold_preferences(facts: List[dict]) -> List[Tuple[str, float]]:
     liked_score = 0.0
     disliked_score = 0.0
     for fact in facts:
-        value = str(fact["object"])
-        if value in liked or value in disliked:
+        value = _clip(str(fact["object"]), _MAX_FOLDED_VALUE_CHARS)
+        if not value or value in liked or value in disliked:
             continue
         if _negated(fact.get("qualifiers")):
             disliked.append(value)
@@ -386,13 +413,18 @@ def _attribute_lines(facts: List[dict]) -> List[Tuple[str, float]]:
 
     Several values for the same predicate are merged into one line in score
     order, so a mistyped or re-stated attribute does not burn a whole
-    token budget line on its own.
+    token budget line on its own. Values are clipped individually first (see
+    :data:`_MAX_FOLDED_VALUE_CHARS`) so a long one cannot hide its siblings; the
+    line cap in :func:`_render_section_lines` then bounds the total.
     """
     merged: dict = {}
     scores: dict = {}
     for fact in facts:
+        value = _clip(str(fact["object"]), _MAX_FOLDED_VALUE_CHARS)
+        if not value:
+            continue
         predicate = fact["predicate"]
-        merged.setdefault(predicate, []).append(str(fact["object"]))
+        merged.setdefault(predicate, []).append(value)
         scores[predicate] = max(scores.get(predicate, 0.0), fact["score"])
 
     lines: List[Tuple[str, float]] = []
@@ -406,32 +438,46 @@ def _attribute_lines(facts: List[dict]) -> List[Tuple[str, float]]:
 
 
 def _render_fact_line(section: str, fact: dict) -> str:
-    """Render one fact as a compact bullet line."""
-    title = _fact_title(fact, limit=_COMPACT_CONTENT_CHARS)
+    """Render one fact as a compact bullet line.
+
+    No clipping happens here: the line (including the ``- `` marker and any
+    ``[when]`` prefix) is clipped as a whole by :func:`_render_section_lines`, so
+    the cap applies to exactly what the reader sees.
+    """
+    title = _fact_title(fact)
     if section == "episodic":
         when = _qualifier(fact.get("qualifiers"), "when")
         return f"- [{when}] {title}" if when else f"- {title}"
     return f"- {title}"
 
 
-def _fact_title(fact: dict, limit: int) -> str:
+def _fact_title(fact: dict) -> str:
     """Return the human-facing value of a fact, body-backed when available.
 
-    Facts carrying a knowledge body render that body (truncated) rather than the
+    Facts carrying a knowledge body render that body rather than the
     placeholder-ish ``object`` headline, which for a long-form fact is often
-    just a repeat of the predicate ("构建发布流程" → "dsh-atom-memory").
+    just a repeat of the predicate ("构建发布流程" → "dsh-atom-memory"). Only
+    whitespace is normalised here; length is bounded once, by the line cap.
     """
     body = (fact.get("content") or "").strip()
     value = body if body else str(fact["object"]).strip()
-    return _clip(value, limit) or str(fact["object"]).strip()
+    return " ".join(value.split())
 
 
 def _clip(text: str, limit: int) -> str:
-    """Truncate a text to ``limit`` characters, appending an ellipsis."""
+    """Normalise whitespace and truncate to *at most* ``limit`` characters.
+
+    The ellipsis is counted **inside** the limit, so this is a real cap: a caller
+    that bounds a rendered line by ``limit`` can rely on ``len(result) <= limit``.
+    (Appending the ellipsis on top of ``limit`` characters, as this used to do,
+    made every "cap" one character larger than advertised.)
+    """
     text = " ".join(text.split())
     if len(text) <= limit:
         return text
-    return text[:limit] + "…"
+    if limit <= 1:
+        return text[:max(limit, 0)]
+    return text[:limit - 1] + "…"
 
 
 def _select(sections: dict, max_tokens: int) -> dict:
@@ -570,15 +616,19 @@ def _format_fact(fact: dict) -> str:
     render the body on a folded sub-line so the full text stays addressable
     without bloating the bullet. The stored scores are deliberately *not*
     rendered: they are uniform in practice and read as false precision.
+
+    Each of ``subject`` / ``predicate`` / ``object`` is clipped individually, so
+    a runaway field cannot push the ``fact_id`` (the whole reason this depth
+    exists) out of sight.
     """
-    head = (
-        f"[{fact['fact_id']}] **{fact['subject']}** — {fact['predicate']}: "
-        f"{fact['object']}"
-    )
+    subject = _clip(str(fact["subject"]), _MAX_DETAIL_FIELD_CHARS)
+    predicate = _clip(str(fact["predicate"]), _MAX_DETAIL_FIELD_CHARS)
+    obj = _clip(str(fact["object"]), _MAX_DETAIL_FIELD_CHARS)
+    head = f"[{fact['fact_id']}] **{subject}** — {predicate}: {obj}"
     content = fact.get("content")
     if content:
         snippet = _clip(content, _DETAIL_CONTENT_CHARS)
-        if snippet and snippet != str(fact["object"]).strip():
+        if snippet and snippet != obj:
             return f"{head}\n    > **知识内容** {snippet}"
     return head
 
