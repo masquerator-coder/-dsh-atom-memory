@@ -70,9 +70,13 @@ pnpm build       # -> lib/index.mjs
 > 必须自带一个**已构建好**的、符合 `window.__ModuleLoader__.load({id, factory(require)})`
 > 收缩格式的 `lib/client.js`。本仓库的 `tsdown.config.ts` 会产出一个这样的产物：
 > framework（react / cordis / dsh-client-*）作为 module-table `require()` 外链，
-> 插件自身代码内联；`exports["./client"]` 指向 `./lib/client.js`。故 git 安装后
-> 无需再跑 dsh 的 dev:web 构建即可在设置页出现「记忆」分区。`src/client` 源码头仍保留，
-> 用 `tsconfig.client.json` 做类型校验。
+> 插件自身代码内联。**关键**：`exports["./client"]` 与 `dsh.client` 必须声明在
+> **loader row 真正解析到的根 `package.json`**（本仓库即根清单，指向 `./dsh/lib/client.js`）
+> ——dsh 的 `client-modules` 服务按 `dsh.profile.bundles` 里的 loader 条目扫描，
+> 每个条目解析到一份清单；若只写在子子包 `dsh/package.json` 上，根清单没有
+> `dsh.client` 会被判为「不是 client row」，浏览器收不到 bundle、设置分区不挂载。
+> 故 git 安装后无需再跑 dsh 的 dev:web 构建即可在设置页出现「记忆」分区。
+> `src/client` 源码头仍保留，用 `tsconfig.client.json` 做类型校验。
 
 ## 工具（模型可见面）
 

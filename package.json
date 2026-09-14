@@ -5,6 +5,16 @@
   "type": "module",
   "main": "./dsh/lib/index.mjs",
   "types": "./dsh/lib/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dsh/lib/index.d.mts",
+      "default": "./dsh/lib/index.mjs"
+    },
+    "./client": {
+      "default": "./dsh/lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dsh/lib",
     "dsh/src/client",
@@ -44,6 +54,22 @@
   "dsh": {
     "bundle": {
       "patch": "./dsh/cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "external": [
+        "@deepseek-ai/dsh-client-store",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
     }
   },
   "engines": {
