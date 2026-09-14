@@ -19,6 +19,7 @@
 import { createUserMessage, BlockAssembler } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
+import type { ExtractionModelOverride } from './runtime.ts'
 
 /** One typed candidate matching the Python ``persist_candidates`` wire shape. */
 export interface ExtractedCandidate {
@@ -115,6 +116,12 @@ function isEphemeral(c: Partial<ExtractedCandidate>): boolean {
  * neither yields a usable provider/model, ``undefined`` is returned and the
  * caller falls back to the Python rule engine (never a silent drop).
  *
+ * Custom endpoint: when the override also names a ``baseURL`` (API 地址), the
+ * extractor calls that OpenAI-compatible endpoint directly
+ * (``POST {baseURL}/chat/completions``, ``Authorization: Bearer {apiKey}``, SSE)
+ * instead of routing through ``ctx.llm``. The API key travels only in the
+ * Authorization header and is never logged. Protocol is assumed `openai`.
+ *
  * @returns ``undefined`` when no `llm` service and no usable model is
  *   available, so callers can disable the LLM path cleanly.
  */
@@ -123,15 +130,20 @@ export function buildLlmExtractor(
   opts: {
     maxTokens?: number
     /** Manual provider/model override; wins over the dsh default selection. */
-    modelOverride?: () => { provider?: string; model?: string } | undefined
+    modelOverride?: () => ExtractionModelOverride | undefined
     /** When it returns false the extractor yields nothing (caller falls back). */
     enabled?: () => boolean
+    /** Inject a fetch for the direct-endpoint path (testability). Defaults to global fetch. */
+    fetchImpl?: (input: string, init?: Record<string, unknown>) => Promise<{ ok: boolean; body: { getReader(): unknown } }>
+    /** Inject a logger sink (defaults to ctx.logger). */
+    log?: (message: string) => void
   } = {},
 ): ExtractFn | undefined {
   const llm = ctx.get('llm') as LlmLike | undefined
-  if (llm === undefined) return undefined
-  const def = ctx.get('agentDefaultModel') as AgentDefaultModelLike | undefined
   const modelOverride = opts.modelOverride?.()
+  const log = opts.log ?? ((m: string) => { ctx.logger?.(m) })
+
+  const def = ctx.get('agentDefaultModel') as AgentDefaultModelLike | undefined
 
   let provider = modelOverride?.provider?.trim() ?? ''
   let model = modelOverride?.model?.trim() ?? ''
@@ -148,7 +160,21 @@ export function buildLlmExtractor(
   }
   if (!provider || !model) return undefined
 
+  // Custom OpenAI-compatible endpoint: when the override names a baseURL we
+  // call it directly; the extraction then works even for endpoints dsh has no
+  // provider adapter for.
+  const baseURL = modelOverride?.baseURL?.trim() ?? ''
+  const apiKey = modelOverride?.apiKey ?? ''
+  const hasCustomEndpoint = baseURL.length > 0
+
+  // The `llm` service is required only for the ctx.llm path; a custom endpoint
+  // is called over plain fetch and needs no dsh LLM provider.
+  if (!hasCustomEndpoint && llm === undefined) return undefined
+
   const enabled = opts.enabled
+  const maxTokens = opts.maxTokens ?? 2048
+  const fetchImpl = opts.fetchImpl
+
   return async (text: string): Promise<ExtractedCandidate[]> => {
     if (enabled?.() === false) return []
     const messages = [
@@ -157,39 +183,143 @@ export function buildLlmExtractor(
         source: { kind: 'plugin', plugin: 'dsh-atom-memory' } as never,
       }),
     ]
-    const options: GenerateOptions = {
-      provider,
-      model,
-      messages: messages as never[],
-      system: EXTRACTION_SYSTEM,
-      maxTokens: opts.maxTokens ?? 2048,
-      purpose: 'session-title',
+    let raw: string
+    if (hasCustomEndpoint) {
+      raw = await extractViaEndpoint({
+        baseURL,
+        model,
+        apiKey,
+        system: EXTRACTION_SYSTEM,
+        userText: text,
+        maxTokens,
+        fetchImpl,
+        log,
+      })
+    } else {
+      const options: GenerateOptions = {
+        provider,
+        model,
+        messages: messages as never[],
+        system: EXTRACTION_SYSTEM,
+        maxTokens,
+        purpose: 'session-title',
+      }
+      const assembler = new BlockAssembler()
+      // `llm` is guaranteed present here: the build-time guard above returns
+      // undefined when there is no custom endpoint and no `llm` service.
+      for await (const chunk of llm!.stream(options)) {
+        assembler.push(chunk as never)
+      }
+      const finished = assembler.finish
+      if (finished.kind !== 'stop') {
+        // Truncated (or otherwise unfinished) output: partial JSON is unusable,
+        // so it is discarded and the caller falls back. Log it, because a budget
+        // that is too small otherwise loses long knowledge invisibly.
+        log(
+          `[atom-memory] extraction not persisted (finish=${finished.kind}); `
+          + `consider raising extractionMaxTokens (now ${maxTokens})`,
+        )
+        return []
+      }
+      raw = assembler.blocks()
+        .filter(b => b.type === 'text')
+        .map(b => (b as { text?: string }).text ?? '')
+        .join('')
+        .trim()
     }
-    const assembler = new BlockAssembler()
-    for await (const chunk of llm.stream(options)) {
-      assembler.push(chunk as never)
-    }
-    const finished = assembler.finish
-    if (finished.kind !== 'stop') {
-      // Truncated (or otherwise unfinished) output: partial JSON is unusable,
-      // so it is discarded and the caller falls back. Log it, because a budget
-      // that is too small otherwise loses long knowledge invisibly.
-      ctx.logger(
-        `[atom-memory] extraction not persisted (finish=${finished.kind}); `
-        + `consider raising extractionMaxTokens (now ${opts.maxTokens ?? 2048})`,
-      )
-      return []
-    }
-    const raw = assembler.blocks()
-      .filter(b => b.type === 'text')
-      .map(b => (b as { text?: string }).text ?? '')
-      .join('')
-      .trim()
     if (!raw) return []
     // Strip accidental code fences defensively.
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
     return parseCandidates(cleaned)
   }
+}
+
+/**
+ * One OpenAI-compatible streaming completion over a custom endpoint. Strips the
+ * JSON payload to the finished text, throwing on a transport/HTTP error so the
+ * caller can fall back. The API key goes only in the Authorization header and
+ * is never logged.
+ *
+ * @param deps.fetchImpl - injected fetch (testability); the global fetch when
+ *   omitted.
+ */
+export async function extractViaEndpoint(deps: {
+  baseURL: string
+  model: string
+  apiKey: string
+  system: string
+  userText: string
+  maxTokens: number
+  fetchImpl?: (input: string, init?: Record<string, unknown>) => Promise<{ ok: boolean; body: { getReader(): unknown } }>
+  log: (message: string) => void
+}): Promise<string> {
+  const {
+    baseURL, model, apiKey, system, userText, maxTokens, log,
+  } = deps
+  const fetchImpl = deps.fetchImpl ?? (globalThis as { fetch?: unknown }).fetch as
+    ((input: string, init?: Record<string, unknown>) => Promise<{ ok: boolean; body: { getReader(): unknown } }>)
+  if (typeof fetchImpl !== 'function') {
+    throw new Error('custom extraction endpoint requires a fetch implementation')
+  }
+  const url = `${baseURL.replace(/\/+$/u, '')}/chat/completions`
+  log(`[atom-memory] extraction via custom endpoint ${baseURL} model=${model}`)
+  const response = await fetchImpl(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: userText },
+      ],
+      stream: true,
+      max_tokens: maxTokens,
+    }),
+  } as Record<string, unknown>)
+  if (!response.ok) {
+    throw new Error(`custom endpoint ${baseURL} returned HTTP ${(response as { status?: unknown }).status ?? 'error'}`)
+  }
+  return collectSseText(response.body as never as { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } })
+}
+
+/**
+ * Read an SSE response body, concatenating OpenAI `choices[].delta.content`
+ * until `[DONE]`. Returns the full text; strips an SSE `data:` prefix per line.
+ */
+export async function collectSseText(
+  body: { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } },
+): Promise<string> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let out = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).trim()
+      buffer = buffer.slice(nl + 1)
+      if (line.startsWith('data:')) {
+        const payload = line.slice(5).trim()
+        if (payload === '[DONE]') return out
+        if (!payload) continue
+        try {
+          const event = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> }
+          const delta = event.choices?.[0]?.delta?.content
+          if (delta) out += delta
+        } catch {
+          /* skip a malformed SSE data line */
+        }
+      }
+    }
+  }
+  return out
 }
 
 /**

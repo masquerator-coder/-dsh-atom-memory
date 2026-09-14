@@ -93,6 +93,19 @@ describe('MemorySettingsController', () => {
     expect(set).toHaveBeenCalledWith('extractionModel', { provider: 'deepseek', model: 'deepseek-chat' })
   })
 
+  it('routes the full extraction-model override (provider/model/baseURL/protocol/apiKey)', async () => {
+    const { scope, set } = fakeScope(snapshot({}))
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, [])
+    await controller.inject().setExtractionModelOverride({
+      provider: 'custom', model: 'gpt-4o-mini',
+      baseURL: 'https://api.example.com/v1', protocol: 'openai', apiKey: 'sk-test',
+    })
+    expect(set).toHaveBeenCalledWith('extractionModel', {
+      provider: 'custom', model: 'gpt-4o-mini',
+      baseURL: 'https://api.example.com/v1', protocol: 'openai', apiKey: 'sk-test',
+    })
+  })
+
   it('calls the Remote namespace for backup and restore', async () => {
     const { scope } = fakeScope(snapshot({}))
     const { remote, backup, restore } = fakeRemote()

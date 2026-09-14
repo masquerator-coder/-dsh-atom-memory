@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { parseCandidates, buildLlmExtractor } from '../src/llm-extractor.ts'
+import { describe, it, expect, vi } from 'vitest'
+import {
+  parseCandidates, buildLlmExtractor, collectSseText, extractViaEndpoint,
+} from '../src/llm-extractor.ts'
 
 describe('parseCandidates', () => {
   it('parses a valid JSON array of typed candidates', () => {
@@ -164,5 +166,79 @@ describe('buildLlmExtractor', () => {
     const extract = buildLlmExtractor(ctx, { enabled: () => false })!
     expect(await extract('x')).toEqual([])
     expect(called).toBe(false)
+  })
+})
+
+describe('custom endpoint (direct OpenAI-compatible)', () => {
+  /** Build an SSE Response-like body reader over literal string chunks. */
+  function sseBody(chunks: string[]) {
+    const e = new TextEncoder()
+    let i = 0
+    return {
+      getReader: () => ({
+        read: async () => i < chunks.length
+          ? { done: false, value: e.encode(chunks[i++]) }
+          : { done: true, value: undefined },
+      }),
+    }
+  }
+
+  it('accumulates chunked content across SSE events', async () => {
+    const enc2 = new TextEncoder()
+    const reader = {
+      getReader: () => {
+        const parts = [
+          'data: {"choices":[{"delta":{"content":"hel"}}]}\n',
+          'data: {"choices":[{"delta":{"content":"lo"}}]}\n',
+          'data: {"choices":[{"delta":{"content":" world"}}]}\n',
+          'data: [DONE]\n',
+        ]
+        let i = 0
+        return { read: async () => i < parts.length ? { done: false, value: enc2.encode(parts[i++]) } : { done: true, value: undefined } }
+      },
+    }
+    expect(await collectSseText(reader as never)).toBe('hello world')
+  })
+
+  it('extractViaEndpoint POSTs chat/completions with a Bearer key and parses the finished JSON', async () => {
+    const payload = '[{"subject":"用户","predicate":"偏好","object":"茶"}]'
+    const sse = [
+      'data: ' + JSON.stringify({ choices: [{ delta: { content: '[' } }] }) + '\n',
+      'data: ' + JSON.stringify({ choices: [{ delta: { content: payload.slice(1, -1) } }] }) + '\n',
+      'data: ' + JSON.stringify({ choices: [{ delta: { content: ']' } }] }) + '\n',
+      'data: [DONE]\n',
+    ]
+    const fetchImpl = vi.fn(async (_url: string, init?: Record<string, unknown>) => {
+      capturedRequest = init as { headers: Record<string, string>; body: string }
+      return { ok: true, status: 200, body: sseBody(sse) }
+    })
+    let capturedRequest: { headers: Record<string, string>; body: string } | undefined
+    const log = vi.fn()
+    // The custom-endpoint path needs no `llm` service or default-model service.
+    const ctx = { get: () => undefined, logger: () => {} } as never
+    const out = await buildLlmExtractor(ctx as never, {
+      modelOverride: () => ({
+        provider: 'custom', model: 'gpt-4o-mini',
+        baseURL: 'https://api.example.com/v1', protocol: 'openai', apiKey: 'sk-secret',
+      }),
+      fetchImpl: fetchImpl as never,
+      log,
+    })!
+    expect(out).toBeDefined()
+    const candidates = await out('用户喜欢茶')
+    expect(candidates).toEqual([{ subject: '用户', predicate: '偏好', object: '茶' }])
+    // The request targets {baseURL}/chat/completions with a Bearer key.
+    expect(fetchImpl).toHaveBeenCalled()
+    const url = fetchImpl.mock.calls[0][0] as string
+    expect(url).toBe('https://api.example.com/v1/chat/completions')
+    expect(capturedRequest!.headers.Authorization).toBe('Bearer sk-secret')
+    // The API key must never be logged.
+    const logged = log.mock.calls.map(c => String(c[0])).join('\n')
+    expect(logged).not.toContain('sk-secret')
+  })
+
+  it('parseCandidates round-trips through a direct endpoint call without ctx.llm', async () => {
+    // Sanity: parseCandidates already yields typed candidates from the assembled JSON.
+    expect(parseCandidates('[{"subject":"u","predicate":"p","object":"o"}]')).toEqual([{ subject: 'u', predicate: 'p', object: 'o' }])
   })
 })

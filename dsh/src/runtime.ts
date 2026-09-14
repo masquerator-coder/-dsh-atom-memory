@@ -14,10 +14,16 @@
  */
 
 export interface ExtractionModelOverride {
-  /** Manual provider id (e.g. `deepseek`). */
+  /** Manual provider id (e.g. `deepseek`) or a free-form label for a custom endpoint. */
   provider?: string
   /** Manual model name. Leave empty to follow the dsh default selection. */
   model?: string
+  /** Custom OpenAI-compatible endpoint base URL (e.g. `https://api.example.com/v1`). */
+  baseURL?: string
+  /** Wire protocol the endpoint speaks. Only `openai` is currently supported. */
+  protocol?: string
+  /** API key for a custom endpoint (plaintext, per the settings-panel design). */
+  apiKey?: string
 }
 
 /** The live fields the settings panel can toggle at runtime. */

@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added (第三轮：手动模型自定义端点)
+- **「手动指定模型」展开完整参数设置**：选「手动」后显示 Provider ID、Model、
+  API 地址 (Base URL)、API 协议（当前仅 `openai`）、API 密钥（密码框）五组参数。
+  - 设置命名空间 `extractionModel` 结构扩展为
+    `{provider, model, baseURL, protocol, apiKey}`（host `config.ts`/`runtime.ts`/
+    `index.ts` 的 `LiveSettingsSchema` 与浏览器侧 `MemorySettingsSection`、
+    客户端控制器同步）；新增 face 方法 `setExtractionModelOverride(override)`。
+  - **抽取器直连 OpenAI 兼容端点**：`llm-extractor.buildLlmExtractor` 在
+    override 给出 `baseURL` 时跳过 `ctx.llm`，改用 `fetch` 直接
+    `POST {baseURL}/chat/completions`（Bearer apiKey 只在 Authorization 头，
+    **从不打日志**，有回归测试断言 key 不出现在日志），SSE 解析
+    `choices[].delta.content` 直至 `[DONE]`，再走原 `parseCandidates`。
+    未填 baseURL 时仍走 `ctx.llm` 默认/手动 provider+model（恢复
+    `llm` 服务缺失时返回 `undefined` 的守卫，仅对非自定义路径生效）。
+  - 协议仅支持 `openai`（用户确认）；密钥明文存设置文档（用户确认）。
+
 ### Added (第二轮 UI 反馈)
 1. **按钮跟随系统颜色**：此前样式用了自造的 `var(--dsh-surface-2,#24262b)` 等
    写死深色回退值，导致任何主题下按钮都是黑色。改为 dsh 设计令牌

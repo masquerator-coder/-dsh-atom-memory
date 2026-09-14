@@ -245,7 +245,10 @@ const LiveSettingsSchema: z<LiveRuntime> = z.object({
   extractionModel: z.object({
     provider: z.string().default(''),
     model: z.string().default(''),
-  }).default({ provider: '', model: '' }),
+    baseURL: z.string().default(''),
+    protocol: z.string().default('openai'),
+    apiKey: z.string().default(''),
+  }).default({ provider: '', model: '', baseURL: '', protocol: 'openai', apiKey: '' }),
 })
 
 

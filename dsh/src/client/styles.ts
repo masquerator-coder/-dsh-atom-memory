@@ -16,6 +16,10 @@ export const memorySettingsStyleText = `
 .atom-memory-block legend{font-weight:600;padding:0 4px;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-inputs{display:flex;gap:8px;margin-top:4px}
+.atom-memory-field{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.atom-memory-field-label{font-size:12px;color:var(--dsw-alias-label-secondary,#8a8f98)}
+.atom-memory-field input,.atom-memory-field select{padding:6px 8px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px;box-sizing:border-box}
+.atom-memory-field select{appearance:auto}
 .atom-memory-inputs input,.atom-memory-fact-fields input,.atom-memory-fact-fields textarea{flex:1;padding:6px 8px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px;min-width:0;box-sizing:border-box}
 .atom-memory-fact-fields textarea{min-height:40px;resize:vertical;flex-basis:100%}
 .atom-memory-hint{margin:0;color:var(--dsw-alias-label-secondary,#8a8f98);font-size:12px}

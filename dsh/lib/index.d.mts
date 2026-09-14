@@ -14,6 +14,12 @@ interface Config {
   extractionModel?: {
     provider?: string;
     model?: string;
+    /** Custom OpenAI-compatible endpoint base URL. When set, the extractor calls it directly. */
+    baseURL?: string;
+    /** Wire protocol the endpoint speaks (only `openai` supported). */
+    protocol?: string;
+    /** API key for a custom endpoint (plaintext). */
+    apiKey?: string;
   };
   /** Whether the session/durable capture hooks (turn/end, user/message) run. */
   captureEnabled?: boolean;

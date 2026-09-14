@@ -17,7 +17,16 @@ export interface Config {
   /** Master memory switch: when false the plugin is inert (no capture/context/tools). */
   enabled?: boolean
   /** Manual LLM extraction model override; omit or leave provider empty to follow dsh default. */
-  extractionModel?: { provider?: string; model?: string }
+  extractionModel?: {
+    provider?: string
+    model?: string
+    /** Custom OpenAI-compatible endpoint base URL. When set, the extractor calls it directly. */
+    baseURL?: string
+    /** Wire protocol the endpoint speaks (only `openai` supported). */
+    protocol?: string
+    /** API key for a custom endpoint (plaintext). */
+    apiKey?: string
+  }
   /** Whether the session/durable capture hooks (turn/end, user/message) run. */
   captureEnabled?: boolean
   /** Whether the LLM-first extractor is wired to the dsh default model. */
@@ -55,7 +64,10 @@ export const Config: z<Config> = z.object({
   extractionModel: z.object({
     provider: z.string().default(''),
     model: z.string().default(''),
-  }).default({ provider: '', model: '' }),
+    baseURL: z.string().default(''),
+    protocol: z.string().default('openai'),
+    apiKey: z.string().default(''),
+  }).default({ provider: '', model: '', baseURL: '', protocol: 'openai', apiKey: '' }),
   captureEnabled: z.boolean().default(true),
   llmExtractionEnabled: z.boolean().default(true),
   extractionMaxTokens: z.number().default(2048),

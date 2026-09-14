@@ -51,6 +51,7 @@ window.__ModuleLoader__.load({
 						provider,
 						model
 					}),
+					setExtractionModelOverride: (override) => this.scope.set("extractionModel", override),
 					refreshData: () => this.refreshData(),
 					saveFact: (fact) => this.saveFact(fact),
 					deleteFact: (factId) => this.deleteFact(factId),
@@ -266,10 +267,18 @@ window.__ModuleLoader__.load({
 				modelFollowDefault: "跟随 dsh 默认模型",
 				modelManual: "手动指定模型",
 				modelProvider: "Provider",
-				modelProviderPlaceholder: "如 deepseek",
+				modelProviderPlaceholder: "Provider ID，如 deepseek",
+				modelProviderLabel: "Provider ID",
 				modelName: "Model",
 				modelNamePlaceholder: "如 deepseek-chat",
-				modelHint: "provider 留空视为跟随 dsh 默认模型。",
+				modelNameLabel: "Model",
+				modelBaseUrlLabel: "API 地址 (Base URL)",
+				modelBaseUrlPlaceholder: "如 https://api.deepseek.com/v1",
+				modelProtocolLabel: "API 协议",
+				modelProtocolOpenai: "openai（OpenAI 兼容）",
+				modelApiKeyLabel: "API 密钥",
+				modelApiKeyPlaceholder: "sk-...",
+				modelHint: "选择“手动指定模型”后可填 Provider ID 与 Model（跟随默认时留空）；填了 API 地址则由插件直连该 OpenAI 兼容端点，否则走 dsh 默认模型。",
 				profileHeader: "User 画像编辑",
 				profileEmpty: "暂无画像条目。",
 				profileEditBtn: "编辑画像",
@@ -323,10 +332,18 @@ window.__ModuleLoader__.load({
 				modelFollowDefault: "Follow the dsh default model",
 				modelManual: "Specify a model manually",
 				modelProvider: "Provider",
-				modelProviderPlaceholder: "e.g. deepseek",
+				modelProviderPlaceholder: "Provider ID, e.g. deepseek",
+				modelProviderLabel: "Provider ID",
 				modelName: "Model",
 				modelNamePlaceholder: "e.g. deepseek-chat",
-				modelHint: "Leaving provider empty follows the dsh default model.",
+				modelNameLabel: "Model",
+				modelBaseUrlLabel: "API Base URL",
+				modelBaseUrlPlaceholder: "e.g. https://api.deepseek.com/v1",
+				modelProtocolLabel: "API protocol",
+				modelProtocolOpenai: "openai (OpenAI-compatible)",
+				modelApiKeyLabel: "API key",
+				modelApiKeyPlaceholder: "sk-...",
+				modelHint: "With “manual model” you can set Provider ID and Model (leave empty to follow default); filling in the API Base URL makes the plugin call that OpenAI-compatible endpoint directly, otherwise the dsh default model is used.",
 				profileHeader: "User profile editing",
 				profileEmpty: "No profile entries yet.",
 				profileEditBtn: "Edit profile",
@@ -393,6 +410,10 @@ window.__ModuleLoader__.load({
 .atom-memory-block legend{font-weight:600;padding:0 4px;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-inputs{display:flex;gap:8px;margin-top:4px}
+.atom-memory-field{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.atom-memory-field-label{font-size:12px;color:var(--dsw-alias-label-secondary,#8a8f98)}
+.atom-memory-field input,.atom-memory-field select{padding:6px 8px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px;box-sizing:border-box}
+.atom-memory-field select{appearance:auto}
 .atom-memory-inputs input,.atom-memory-fact-fields input,.atom-memory-fact-fields textarea{flex:1;padding:6px 8px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px;min-width:0;box-sizing:border-box}
 .atom-memory-fact-fields textarea{min-height:40px;resize:vertical;flex-basis:100%}
 .atom-memory-hint{margin:0;color:var(--dsw-alias-label-secondary,#8a8f98);font-size:12px}
@@ -460,6 +481,8 @@ window.__ModuleLoader__.load({
 			switchRow: "atom-memory-switch-row",
 			radioRow: "atom-memory-radio-row",
 			inputs: "atom-memory-inputs",
+			field: "atom-memory-field",
+			fieldLabel: "atom-memory-field-label",
 			hint: "atom-memory-hint",
 			empty: "atom-memory-empty",
 			add: "atom-memory-add",
@@ -582,22 +605,93 @@ window.__ModuleLoader__.load({
 									onChange: () => setModelManual(true)
 								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("modelManual") })]
 							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-								className: css.inputs,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-									placeholder: t("modelProviderPlaceholder"),
-									value: state.section.extractionModel?.provider ?? "",
-									onBlur: (e) => {
-										props.setExtractionModel(e.currentTarget.value, state.section.extractionModel?.model ?? "");
-									}
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-									placeholder: t("modelNamePlaceholder"),
-									value: state.section.extractionModel?.model ?? "",
-									onBlur: (e) => {
-										props.setExtractionModel(state.section.extractionModel?.provider ?? "", e.currentTarget.value);
-									}
-								})]
-							}),
+							modelManual && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.field,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+										className: css.fieldLabel,
+										children: t("modelProviderLabel")
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+										placeholder: t("modelProviderPlaceholder"),
+										value: state.section.extractionModel?.provider ?? "",
+										onBlur: (e) => {
+											props.setExtractionModelOverride({
+												...state.section.extractionModel ?? {},
+												provider: e.currentTarget.value
+											});
+										}
+									})]
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.field,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+										className: css.fieldLabel,
+										children: t("modelNameLabel")
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+										placeholder: t("modelNamePlaceholder"),
+										value: state.section.extractionModel?.model ?? "",
+										onBlur: (e) => {
+											props.setExtractionModelOverride({
+												...state.section.extractionModel ?? {},
+												model: e.currentTarget.value
+											});
+										}
+									})]
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.field,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+										className: css.fieldLabel,
+										children: t("modelBaseUrlLabel")
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+										placeholder: t("modelBaseUrlPlaceholder"),
+										value: state.section.extractionModel?.baseURL ?? "",
+										onBlur: (e) => {
+											props.setExtractionModelOverride({
+												...state.section.extractionModel ?? {},
+												baseURL: e.currentTarget.value.trim()
+											});
+										}
+									})]
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.field,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+										className: css.fieldLabel,
+										children: t("modelProtocolLabel")
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("select", {
+										value: state.section.extractionModel?.protocol || "openai",
+										onChange: (e) => {
+											props.setExtractionModelOverride({
+												...state.section.extractionModel ?? {},
+												protocol: e.currentTarget.value
+											});
+										},
+										children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+											value: "openai",
+											children: t("modelProtocolOpenai")
+										})
+									})]
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.field,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+										className: css.fieldLabel,
+										children: t("modelApiKeyLabel")
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+										type: "password",
+										autoComplete: "off",
+										placeholder: t("modelApiKeyPlaceholder"),
+										value: state.section.extractionModel?.apiKey ?? "",
+										onBlur: (e) => {
+											props.setExtractionModelOverride({
+												...state.section.extractionModel ?? {},
+												apiKey: e.currentTarget.value
+											});
+										}
+									})]
+								})
+							] }),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 								className: css.hint,
 								children: t("modelHint")

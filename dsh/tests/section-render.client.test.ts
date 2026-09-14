@@ -79,6 +79,7 @@ function bind(controller: MemorySettingsController) {
     useMemorySettings: useMemorySettings as never,
     setEnabled: async () => {}, refreshData: face.refreshData,
     setExtractionModel: face.setExtractionModel,
+    setExtractionModelOverride: face.setExtractionModelOverride,
     saveFact: face.saveFact, deleteFact: face.deleteFact,
     upsertProfile: face.upsertProfile, deleteProfile: face.deleteProfile,
     fetchMemoryMd: face.fetchMemoryMd,
@@ -143,5 +144,22 @@ describe('MemorySettingsSection client render', () => {
     expect(subjectInput).toBeTruthy()
     // One save-all button, one 添加一行 button, one 取消 (close) button.
     expect(screen.getAllByText('保存全部').length).toBeGreaterThan(0)
+  })
+
+  it('reveals the manual-model parameters (base URL / protocol / API key) when manual is selected', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    // Not visible while following the default model.
+    expect(screen.queryByText('API 地址 (Base URL)')).toBeNull()
+    await act(async () => {
+      fireEvent.click(screen.getByText('手动指定模型'))
+    })
+    expect(screen.getByText('Provider ID')).toBeTruthy()
+    expect(screen.getByText('API 地址 (Base URL)')).toBeTruthy()
+    expect(screen.getByText('API 协议')).toBeTruthy()
+    expect(screen.getByText('API 密钥')).toBeTruthy()
   })
 })

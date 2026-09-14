@@ -19,6 +19,8 @@ const css = {
   switchRow: 'atom-memory-switch-row',
   radioRow: 'atom-memory-radio-row',
   inputs: 'atom-memory-inputs',
+  field: 'atom-memory-field',
+  fieldLabel: 'atom-memory-field-label',
   hint: 'atom-memory-hint',
   empty: 'atom-memory-empty',
   add: 'atom-memory-add',
@@ -177,26 +179,73 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
           />
           <span>{t('modelManual')}</span>
         </label>
-        <div className={css.inputs}>
-          <input
-            placeholder={t('modelProviderPlaceholder')}
-            value={state.section.extractionModel?.provider ?? ''}
-            onBlur={(e) => {
-              void props.setExtractionModel(
-                e.currentTarget.value, state.section.extractionModel?.model ?? '',
-              )
-            }}
-          />
-          <input
-            placeholder={t('modelNamePlaceholder')}
-            value={state.section.extractionModel?.model ?? ''}
-            onBlur={(e) => {
-              void props.setExtractionModel(
-                state.section.extractionModel?.provider ?? '', e.currentTarget.value,
-              )
-            }}
-          />
-        </div>
+        {modelManual && (
+          <div>
+            <div className={css.field}>
+              <label className={css.fieldLabel}>{t('modelProviderLabel')}</label>
+              <input
+                placeholder={t('modelProviderPlaceholder')}
+                value={state.section.extractionModel?.provider ?? ''}
+                onBlur={(e) => {
+                  void props.setExtractionModelOverride({
+                    ...(state.section.extractionModel ?? {}), provider: e.currentTarget.value,
+                  })
+                }}
+              />
+            </div>
+            <div className={css.field}>
+              <label className={css.fieldLabel}>{t('modelNameLabel')}</label>
+              <input
+                placeholder={t('modelNamePlaceholder')}
+                value={state.section.extractionModel?.model ?? ''}
+                onBlur={(e) => {
+                  void props.setExtractionModelOverride({
+                    ...(state.section.extractionModel ?? {}), model: e.currentTarget.value,
+                  })
+                }}
+              />
+            </div>
+            <div className={css.field}>
+              <label className={css.fieldLabel}>{t('modelBaseUrlLabel')}</label>
+              <input
+                placeholder={t('modelBaseUrlPlaceholder')}
+                value={state.section.extractionModel?.baseURL ?? ''}
+                onBlur={(e) => {
+                  void props.setExtractionModelOverride({
+                    ...(state.section.extractionModel ?? {}), baseURL: e.currentTarget.value.trim(),
+                  })
+                }}
+              />
+            </div>
+            <div className={css.field}>
+              <label className={css.fieldLabel}>{t('modelProtocolLabel')}</label>
+              <select
+                value={state.section.extractionModel?.protocol || 'openai'}
+                onChange={(e) => {
+                  void props.setExtractionModelOverride({
+                    ...(state.section.extractionModel ?? {}), protocol: e.currentTarget.value,
+                  })
+                }}
+              >
+                <option value="openai">{t('modelProtocolOpenai')}</option>
+              </select>
+            </div>
+            <div className={css.field}>
+              <label className={css.fieldLabel}>{t('modelApiKeyLabel')}</label>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={t('modelApiKeyPlaceholder')}
+                value={state.section.extractionModel?.apiKey ?? ''}
+                onBlur={(e) => {
+                  void props.setExtractionModelOverride({
+                    ...(state.section.extractionModel ?? {}), apiKey: e.currentTarget.value,
+                  })
+                }}
+              />
+            </div>
+          </div>
+        )}
         <p className={css.hint}>{t('modelHint')}</p>
       </fieldset>
 

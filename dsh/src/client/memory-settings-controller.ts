@@ -19,7 +19,16 @@ export interface MemorySettingsSection {
   captureEnabled: boolean
   llmExtractionEnabled: boolean
   contextInjectionEnabled: boolean
-  extractionModel?: { provider?: string; model?: string }
+  extractionModel?: {
+    provider?: string
+    model?: string
+    /** Custom OpenAI-compatible endpoint base URL (API 地址). */
+    baseURL?: string
+    /** Wire protocol (only `openai` supported). */
+    protocol?: string
+    /** API key for a custom endpoint (plaintext). */
+    apiKey?: string
+  }
 }
 
 /** The dynamic facts/profile/backup data the panel fetches via Remote. */
@@ -61,6 +70,8 @@ export interface MemorySettingsFace {
   }
   setEnabled: (enabled: boolean) => Promise<void>
   setExtractionModel: (provider: string, model: string) => Promise<void>
+  /** Write the whole extraction-model override (provider/model/baseURL/protocol/apiKey). */
+  setExtractionModelOverride: (override: NonNullable<MemorySettingsSection['extractionModel']>) => Promise<void>
   refreshData: () => Promise<void>
   saveFact: (fact: MemoryData['facts'][number]) => Promise<void>
   deleteFact: (factId: string) => Promise<void>
@@ -174,6 +185,8 @@ export class MemorySettingsController {
       setEnabled: (enabled) => this.scope.set('enabled', enabled),
       setExtractionModel: (provider, model) =>
         this.scope.set('extractionModel', { provider, model }),
+      setExtractionModelOverride: (override) =>
+        this.scope.set('extractionModel', override),
       refreshData: () => this.refreshData(),
       saveFact: (fact) => this.saveFact(fact),
       deleteFact: (factId) => this.deleteFact(factId),
