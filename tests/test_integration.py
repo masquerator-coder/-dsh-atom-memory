@@ -161,14 +161,32 @@ def test_memory_md_generation(tmp_path, monkeypatch):
         await mem.start()
         await mem.add("u1", "s1", "用户喜欢黑咖啡", turn_id=1)
         await asyncio.sleep(0.8)
-        md = await mem.memory_md("u1")
+        md = await mem.memory_md("u1", detail=True)
         await mem.stop()
         return md
 
     md = _run(scenario())
     assert "黑咖啡" in md
-    # fact_id present (unique-reference footer or bracketed id)
+    # fact_id present in the detail depth (bracketed id + footer)
     assert "fact_id" in md or "[f" in md
+
+
+def test_memory_md_compact_has_no_fact_id(tmp_path, monkeypatch):
+    """The injected depth renders the same content without the UUID payload."""
+    mem = _make(tmp_path, monkeypatch)
+
+    async def scenario():
+        await mem.start()
+        await mem.add("u1", "s1", "用户喜欢黑咖啡", turn_id=1)
+        await asyncio.sleep(0.8)
+        md = await mem.memory_md("u1", max_tokens=600, detail=False)
+        await mem.stop()
+        return md
+
+    md = _run(scenario())
+    assert "黑咖啡" in md
+    assert "fact_id" not in md
+    assert not md.splitlines()[0].startswith("# 记忆")
 
 
 # ---- knowledge categories end-to-end (type + content + recall + memory_md) -------------

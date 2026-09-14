@@ -42,7 +42,8 @@ pnpm build       # -> lib/index.mjs
 | `nudgeEnabled` | `true` | 周期微调（写路径） |
 | `nudgeIntervalMinutes` | `30` | 微调周期 |
 | `maxRecalledFacts` | `10` | 每次召回给模型的条数上限 |
-| `memoryMdTokens` | `1500` | memory.md token 上限 |
+| `memoryMdTokens` | `1500` | `memory_memory_md` 工具返回的 memory.md 完整清单 token 上限 |
+| `injectedMemoryMdTokens` | `1500` | 注入系统提示词的紧凑快照 token 上限（与上者分开：注入内容每个请求都要付费） |
 | `contextInjectionEnabled` | `true` | 会话起始冻结快照注入系统提示词 |
 | `rpcTimeoutMs` | `30000` | 单次 RPC 超时 |
 
@@ -92,7 +93,7 @@ pnpm build       # -> lib/index.mjs
 | `memory_summary` | 返回记忆的聚合摘要（属性/偏好/工作流程/事件/轻量知识），"先看摘要、再查明细"入口；附带覆盖的 `fact_id` 清单与「未展开长文知识」提示 |
 | `memory_recall` | 语义+全文混合召回；模型可见内容含 `fact_id`、`type` **与 `content` 正文**，并前置聚合摘要 |
 | `memory_forget` | 软删除（retract）一条事实 |
-| `memory_memory_md` | 渲染 memory.md（含 fact_id） |
+| `memory_memory_md` | 渲染 memory.md **完整清单**（每条含 `fact_id`）——注意注入系统提示词的是同一份记忆的紧凑版（按类型分组、不含 `fact_id`），要确认注入内容以本工具为准 |
 | `memory_user_md` | 渲染用户画像 markdown |
 | `memory_stats` | 记忆统计计数 |
 
@@ -110,6 +111,11 @@ memory_summary（概览：聚合摘要 + 覆盖的 fact_id + 未展开长文知�
       │
       └─▶ 需要全量清单 ──▶ memory_memory_md（含 fact_id + 知识正文折叠行，受 token 预算截断）
 ```
+
+> **注入版 vs 完整版**：会话起始冻结进系统提示词的是**紧凑版** memory.md——按记忆类型
+> 分组、`fact_id` 全部省略、按重要度（`importance`，缺失时回落类型默认分）排序、长知识
+> 正文截断，且渲染总长度（含页脚）保证不超 `injectedMemoryMdTokens`。`fact_id` 仍可经
+> `memory_recall`、`memory_memory_md` 与设置界面取得。
 
 长文知识（`sop` / `few_shot`）的正文**被有意排除在摘要文本之外**（体量太大），但摘要会
 显式提示「另有 N 条未展开」并给出 `fact_id`，避免"先看摘要"反而把需要下钻的内容藏起来。

@@ -108,6 +108,10 @@ export function registerMemoryContext(deps: MemoryContextDeps): void {
       const raw = await bridge.call<string>('memory_md', {
         user_id: userScope,
         max_tokens: maxTokens,
+        // Compact depth: the injected view is grouped by memory type and drops
+        // the fact_id UUIDs, which cost more tokens than they carry information
+        // for the model. The tool/settings view keeps the detail depth.
+        detail: false,
       })
       rendered = (raw ?? '').trim()
     } catch {

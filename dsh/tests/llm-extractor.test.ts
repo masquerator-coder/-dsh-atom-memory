@@ -35,6 +35,26 @@ describe('parseCandidates', () => {
     expect(out[0].object).toBe('茶')
   })
 
+  it('accepts scores as strings and clamps them into 0..1', () => {
+    // Models routinely emit scores as strings or out of range; dropping them
+    // would tie the fact with every other one and hide it from ordering.
+    const out = parseCandidates(JSON.stringify([
+      { subject: '用户', predicate: '决定', object: 'A', importance: '0.9', confidence: '0.8' },
+      { subject: '用户', predicate: '决定', object: 'B', importance: 1.5, confidence: -0.2 },
+    ]))
+    expect(out[0]).toMatchObject({ importance: 0.9, confidence: 0.8 })
+    expect(out[1]).toMatchObject({ importance: 1, confidence: 0 })
+  })
+
+  it('leaves scores undefined when nothing usable was supplied', () => {
+    const out = parseCandidates(JSON.stringify([
+      { subject: '用户', predicate: '偏好', object: '茶', importance: 'very high' },
+      { subject: '用户', predicate: '偏好', object: '咖啡' },
+    ]))
+    expect(out[0]!.importance).toBeUndefined()
+    expect(out[1]).toEqual({ subject: '用户', predicate: '偏好', object: '咖啡' })
+  })
+
   it('drops transient process-only candidates (ask/complain/meta)', () => {
     const out = parseCandidates(JSON.stringify([
       // durable, should be kept

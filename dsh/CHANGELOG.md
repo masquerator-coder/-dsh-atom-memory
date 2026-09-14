@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+### Changed (第四轮：memory.md 分层渲染 + 优先级信号)
+- **`memory.md` 拆成两个深度**（一个实现、两处消费），解决"内容多、种类/重点不突出、
+  序列号无意义"：
+  - **紧凑版**（`detail=False`，注入系统提示词的冻结快照）：按记忆类型分组
+    （决策规则 / 教训 / 流程(SOP) / 流程 / 偏好 / 属性 / 示例 / 事件）、按重要度排序、
+    `fact_id` 全部省略、长知识正文截断 80 字符、无文档标题（`# 记忆 (Memory) — global`
+    已删除：注入侧自带前言，且 user scope 恒为 `global`，该行纯属开销）。单值属性折叠成
+    `predicate: value`、同谓词多值合并一行、偏好按喜欢/不喜欢聚成一行。
+  - **完整版**（`detail=True`，`memory_memory_md` 工具与设置界面弹窗）：保持每条事实
+    一行并保留 `fact_id`，但**不再渲染 `*(置信 x · 重要 y)*`**（取值恒为 0.50，属虚假精度）。
+  - `AtomMem.memory_md(user_id, max_tokens=1500, detail=True)`；RPC 透传 `detail`
+    （缺省 `True`，旧调用方不破）；`dsh/src/context.ts` 显式传 `detail: false`。
+- **优先级真正有信号**：此前 87 条事实的 `confidence`/`importance` **全部为 0.5**，
+  排序退化成纯时间序。现在：
+  - 抽取提示词要求模型输出 `importance`（0.9 长期规则/决策/教训、0.7 可复用流程或稳定
+    属性、0.5 次要细节）与 `confidence`，并明确禁止把"本会话做了什么"（装了/测了/重启了）
+    写成 `episodic`——此前 9 条 episodic 事实**全部**因此被 retract，事件分组恒空。
+  - `parseCandidates` 接受字符串数值（模型常返回 `"0.9"`）并 clamp 到 `[0,1]`，
+    此前非 number 一律丢弃。
+  - Python 侧 `importance` 缺失时按**类型默认分**兜底（`models.TYPE_IMPORTANCE`），
+    `confidence` 兜底 `0.7`；`memory_add` 显式记住时对 `importance`/`confidence` 施加
+    0.9 下限（不降低模型已判定的更高值）。
+  - `memory.md` 渲染把 `importance == 0.5` 视为"无信号"并回落类型分，因此**历史 87 条
+    无需回填**即立刻按类型优先级排序。分组顺序也改为按各分组"最高优先级事实"排序，
+    而非固定类型表——否则一条高重要度的属性仍会排在次要规则之后。
+- **token 预算成为硬上限**：渲染总量（含页脚）保证不超 `max_tokens`，此前只约束正文。
+  超预算时从优先级最低的分组向内收缩；某分组被清空则连分组标题一起移除（不残留空标题），
+  页脚给出保留计数、类型分布与被隐藏的分组名（宁可说清"少了什么"，也不静默丢弃）。
+- 新增 `injectedMemoryMdTokens`（默认 1500，独立于 `memoryMdTokens`），注入快照使用该预算。
+- 设置界面「查看 memory.md」弹窗文案与 dsh/根 README 同步说明两个深度的区别。
+- 测试：新增 `tests/test_memory_md.py`（15 例：两深度差异、无标题行、类型分组、
+  类型兜底排序、显式重要度压过类型分、多值折叠、否定偏好、预算硬上限、尾部优先裁剪、
+  空记忆、跨用户隔离、retract 排除）；`dsh` 侧补充 `parseCandidates` 数值与
+  `memory_memory_md` 传 `detail: true`、快照传 `detail: false` 的断言。
+
 ### Added (第三轮：手动模型自定义端点)
 - **「手动指定模型」展开完整参数设置**：选「手动」后显示 Provider ID、Model、
   API 地址 (Base URL)、API 协议（当前仅 `openai`）、API 密钥（密码框）五组参数。

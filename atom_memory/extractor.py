@@ -22,6 +22,7 @@ from .models import (
     TYPE_PROCEDURAL,
     TYPE_SEMANTIC,
     TYPE_SOP,
+    default_importance,
 )
 
 logger = logging.getLogger(__name__)
@@ -494,6 +495,13 @@ def _candidate_from_dict(d: dict, user_id: str = "", session_id: str = "", turn_
         import json
 
         qualifiers = json.dumps(qualifiers, ensure_ascii=False)
+    memory_type = d.get("type") or TYPE_SEMANTIC
+    # A rule that does not state its own priority gets the type's rank, not a
+    # flat 0.5: a uniform value makes every fact tie and ordering collapses to
+    # recency in the derived views.
+    importance = d.get("importance")
+    if importance is None:
+        importance = default_importance(memory_type)
     return FactCandidate(
         candidate_id=str(uuid.uuid4()),
         user_id=d.get("user_id") or user_id,
@@ -504,11 +512,11 @@ def _candidate_from_dict(d: dict, user_id: str = "", session_id: str = "", turn_
         object=obj,
         qualifiers=qualifiers,
         confidence=d.get("confidence", 0.5),
-        importance=d.get("importance", 0.5),
+        importance=importance,
         privacy=d.get("privacy", "private"),
         raw_text=d.get("raw_text"),
         idempotency_key=d.get("idempotency_key"),
-        type=d.get("type", TYPE_SEMANTIC),
+        type=memory_type,
         content=d.get("content"),
     )
 

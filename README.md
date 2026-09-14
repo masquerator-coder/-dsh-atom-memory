@@ -46,6 +46,13 @@ Implemented incrementally behind human review gates — **all four stages done**
   predicate core while ending in a generic head noun
   (`起到的作用 -> 起到的作用`, `被谁调用 -> 被调用的对象`). Such facts carry no
   information but used to pollute the rendered summary and `memory.md`.
+- **Two-depth memory.md + real priority signals (done).** `memory.md` no longer
+  renders one flat, recency-ordered list of raw facts for every consumer. The
+  injected prompt snapshot is a compact, type-grouped, priority-ordered digest
+  with no `fact_id`; the tool/settings view keeps the full list with
+  `fact_id`. Extraction now supplies `importance`/`confidence` (with a type-rank
+  fallback), which is what makes "most important first" mean anything — see
+  [`memory.md` — one view, two depths](#memorymd--one-view-two-depths).
 
 ## Installation
 
@@ -83,8 +90,9 @@ async def main():
         print(fact["subject"], fact["predicate"], fact["object"], fact["final_score"])
 
     # derived views
-    print(await mem.memory_md("user_1"))   # memory.md with fact_id links
-    print(await mem.user_md("user_1"))     # user profile markdown
+    print(await mem.memory_md("user_1"))                  # full list, with fact_id
+    print(await mem.memory_md("user_1", detail=False))    # compact injected digest
+    print(await mem.user_md("user_1"))                    # user profile markdown
 
     # mutate: soft replace and soft forget
     active = mem.db.execute(
@@ -114,9 +122,42 @@ Primary class: `AtomMem`.
 | `recall` | `async recall(user_id, query, token_budget=2000, top_k=10, include_pending=True) -> dict` | Ranked active facts + fresh summaries + pending candidates. |
 | `replace` | `async replace(user_id, fact_id, new_text) -> dict` | Soft-replace: old fact → `superseded`, `superseded_by` set, new fact `active`. |
 | `forget` | `async forget(user_id, fact_id=None, session_id=None) -> dict` | Soft-delete: fact(s) → `retracted`. Pass exactly one of `fact_id`/`session_id`. |
-| `memory_md` | `async memory_md(user_id, max_tokens=1500) -> str` | Render the user's memory.md (with `fact_id` references). |
+| `memory_md` | `async memory_md(user_id, max_tokens=1500, detail=True) -> str` | Render the user's memory.md. `detail=True` lists every fact with its `fact_id`; `detail=False` renders the compact digest injected into the prompt. |
 | `user_md` | `async user_md(user_id, max_tokens=800) -> str` | Render the user's profile markdown. |
 | `stats` | `stats(user_id) -> dict` | Counters: `facts`, `pending`, `stale_summaries`, `summaries`. |
+
+### `memory.md` — one view, two depths
+
+`memory.md` is a derived view over the active facts. It renders at two depths
+from one implementation (`memory_md.generate_memory_md`):
+
+| Depth | Used by | Shape |
+| --- | --- | --- |
+| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** | Facts grouped by memory type, ordered by priority; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; long knowledge bodies truncated to 80 chars; no document title. |
+| `detail=True` (detail) | the `memory_memory_md` tool and the settings dialog | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line. |
+
+Ordering is **priority first**, not recency. `importance` is only treated as a
+signal when the extractor actually supplied one: the neutral default of `0.5`
+means "unknown" and falls back to the fact's type rank
+(`models.TYPE_IMPORTANCE` — `decision_rule` 0.90, `lesson` 0.85, `sop` 0.80,
+`procedural` 0.70, `semantic` 0.60, `episodic`/`few_shot` 0.50). Without that
+fallback every fact ties at 0.5 and the order degenerates to plain recency,
+which is exactly what made the injected view a flat, undifferentiated list.
+Sections are ordered by the rank of their **best** fact, so a genuinely
+important attribute can outrank a section of minor rules.
+
+Nothing is dropped while the render fits. On overflow the lowest-priority
+sections shrink first — pruning walks from the tail inwards, so events go before
+rules — and a section that loses every line loses its label too, so no bare
+`### 流程` stub survives. The footer reports both the kept count per type and
+what was hidden, so a trimmed view still says *which kinds* of memory exist.
+The footer is charged against the same token budget, and the rendered artifact
+(not just its body) is guaranteed to fit it.
+
+`fact_id` is deliberately absent from the compact depth: 19 UUIDs cost roughly
+700 tokens, more than they carry information for the model, while every fact
+stays addressable through `recall` (which returns `fact_id`), the
+`memory_memory_md` tool, and the settings editor.
 
 ### `recall` return shape
 
@@ -186,6 +227,13 @@ class MemConfig:
   correctly scoped. The LLM callable is injected by the host (e.g. a dsh
   plugin that reads the current preset's first model and calls `ctx.llm`); the
   library itself stays free of any harness dependency.
+- **Priority defaults**: when an extractor omits `importance`, the candidate is
+  stamped with its **type's** rank (`models.default_importance`) rather than a
+  flat `0.5`. A uniform default makes every fact tie, which silently collapses
+  the ordering of every derived view to recency; the type rank at least
+  reflects how long each kind of memory stays valuable. `confidence` falls back
+  to a uniform `0.7` (how sure we are it was stated, which is uniform for a
+  direct user message).
 
 ### Memory types in summaries
 
@@ -328,11 +376,20 @@ upgrades), rule extraction (semantic / procedural / episodic + the
 `lesson` / `sop` / `decision_rule` knowledge categories), the validation chain
 (episodic non-conflict, procedural single-valued, degenerate
 placeholder/predicate-echo rejection), retrieval, derived views
-(three-type summary bucketing + light-vs-long knowledge inclusion), and the
-end-to-end pipeline (add/recall/replace/forget/memory_md/summarize/idempotency,
-plus knowledge facts persisting `type` / `content` through recall and
-`memory.md`). Set `ATOM_MEMORY_REAL_EMBED=1` to enable the live-model
+(three-type summary bucketing + light-vs-long knowledge inclusion), the
+`memory.md` renderer in both depths (`tests/test_memory_md.py`: type grouping,
+no `fact_id`/title/scores in the compact depth, type-rank fallback ordering,
+multi-value folding, the token budget as a hard cap, tail-first trimming), and
+the end-to-end pipeline (add/recall/replace/forget/memory_md/summarize/
+idempotency, plus knowledge facts persisting `type` / `content` through recall
+and `memory.md`). Set `ATOM_MEMORY_REAL_EMBED=1` to enable the live-model
 embedding test (needs one-time download).
+
+> On Windows, tests using `tmp_path` can fail during fixture setup with
+> `PermissionError: [WinError 5]`. That is an environment issue in pytest's
+> temp-dir cleanup, not a suite failure — `tests/test_memory_md.py` deliberately
+> uses `connect_for_tests()` (in-memory) instead, and
+> `pytest -p no:cacheprovider --basetemp=<workspace dir>` works around it.
 
 ## License
 

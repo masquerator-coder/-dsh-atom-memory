@@ -36,13 +36,42 @@ const RAW_KNOWLEDGE_PREDICATE = '知识'
 /** Longest title kept from the first line of a raw-fallback body. */
 const RAW_KNOWLEDGE_TITLE_CHARS = 60
 
+/** Importance floor for a fact the user *explicitly* asked to remember. */
+const EXPLICIT_IMPORTANCE = 0.9
+
+/** Confidence stamped on a fact the user explicitly asked to remember. */
+const EXPLICIT_CONFIDENCE = 0.9
+
+/**
+ * Stamp explicit-remember priority onto extracted candidates.
+ *
+ * A `memory_add` call is the user saying "keep this", which is the strongest
+ * durability signal available, so it sets a floor on `importance` — the value
+ * that decides where the fact lands in the priority-ordered memory view.
+ * Extraction may still rank a candidate *higher* (a long SOP body it judged
+ * critical); it is never lowered.
+ *
+ * @param candidates - Candidates produced by the extractor.
+ * @returns The same candidates with the explicit-remember floor applied.
+ */
+export function stampExplicitPriority(
+  candidates: ExtractedCandidate[],
+): ExtractedCandidate[] {
+  return candidates.map(c => ({
+    ...c,
+    importance: Math.max(c.importance ?? 0, EXPLICIT_IMPORTANCE),
+    confidence: Math.max(c.confidence ?? 0, EXPLICIT_CONFIDENCE),
+  }))
+}
+
 /**
  * Build a candidate that stores a payload verbatim as long-form knowledge.
  *
  * Used only when the caller explicitly asked to remember the content and
  * extraction produced nothing usable. ``type`` is long-form knowledge so the
  * body stays out of the summary digest (which advertises it by ``fact_id``
- * instead of inlining it).
+ * instead of inlining it), and the explicit-remember priority applies because
+ * the user asked for this specific content to be kept.
  *
  * @param text - The trimmed content to store.
  * @returns A candidate carrying the full body in ``content``.
@@ -61,6 +90,8 @@ export function rawKnowledgeCandidate(text: string): ExtractedCandidate {
     object: title,
     type: 'sop',
     content: body,
+    importance: EXPLICIT_IMPORTANCE,
+    confidence: EXPLICIT_CONFIDENCE,
   }
 }
 
@@ -150,7 +181,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
               user_id: uid,
               session_id: sid,
               turn_id: 0,
-              candidates,
+              candidates: stampExplicitPriority(candidates),
             })
             return { candidate_id: r.candidate_id ?? '', status: 'queued' }
           }
@@ -280,7 +311,9 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
 
   disposers.push(ctx.tools.register(defineTool({
     name: 'memory_memory_md',
-    description: '渲染当前用户的 memory.md（原子事实清单，含 fact_id）。',
+    description:
+      '渲染当前用户的 memory.md 完整清单（每条含 fact_id，便于定位与编辑）。'
+      + '注入系统提示词的是同一份记忆的紧凑版（按类型分组、不含 fact_id），如需确认注入内容以本工具返回为准。',
     parameters: {
       user: { type: 'string', description: '可选：归属用户 id（默认当前会话）' },
     },
@@ -294,7 +327,11 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
     async execute(args, exec) {
       if (deps.isEnabled?.() === false) throw disabledError()
       const uid = args.user ?? userIdOf(exec, scope)
-      const text = await call<string>('memory_md', { user_id: uid, max_tokens: deps.memoryMdTokens })
+      const text = await call<string>('memory_md', {
+        user_id: uid,
+        max_tokens: deps.memoryMdTokens,
+        detail: true,
+      })
       return { text }
     },
   })))

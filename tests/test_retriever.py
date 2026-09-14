@@ -224,12 +224,27 @@ def test_memory_md_contains_fact_id():
     try:
         _insert_fact(conn, "f1", "u1", "用户", "偏好", "黑咖啡")
         conn.commit()
-        md = generate_memory_md(conn, "u1", max_tokens=2000)
+        md = generate_memory_md(conn, "u1", max_tokens=2000, detail=True)
         assert "f1" in md
         assert "黑咖啡" in md
         # other user not shown
-        md2 = generate_memory_md(conn, "u2", max_tokens=2000)
+        md2 = generate_memory_md(conn, "u2", max_tokens=2000, detail=True)
         assert "暂无" in md2
+    finally:
+        conn.close()
+
+
+def test_memory_md_compact_omits_fact_id():
+    """The injected depth drops the UUIDs, keeping the content itself."""
+    from atom_memory.memory_md import generate_memory_md
+
+    conn = connect_for_tests()
+    try:
+        _insert_fact(conn, "f1", "u1", "用户", "偏好", "黑咖啡")
+        conn.commit()
+        md = generate_memory_md(conn, "u1", max_tokens=2000, detail=False)
+        assert "黑咖啡" in md
+        assert "f1" not in md
     finally:
         conn.close()
 

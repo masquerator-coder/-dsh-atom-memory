@@ -189,11 +189,16 @@ export function apply(ctx: Context, config: ConfigShape): void {
   // `isEnabled` gates snapshot injection; the awareness section is registered
   // always (it is a static capability description) but injection stops when
   // the master switch is off.
+  //
+  // The injected snapshot uses its own (smaller) budget and the compact render
+  // depth: it is paid for on every request and is the view that must stay short
+  // and priority-ordered, unlike the full list the `memory_memory_md` tool and
+  // the settings modal return.
   registerMemoryContext({
     ctx,
     bridge,
     userScope: FALLBACK_SCOPE,
-    maxTokens: config.memoryMdTokens ?? 1500,
+    maxTokens: config.injectedMemoryMdTokens ?? 1500,
     snapshotEnabled: runtime.get().contextInjectionEnabled,
     isEnabled: () => runtime.isEnabled(),
   })

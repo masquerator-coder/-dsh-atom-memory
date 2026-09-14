@@ -20,12 +20,17 @@ import uuid
 from typing import Callable, List, Optional
 
 from .db import now_ms
-from .models import AtomicFact, FactCandidate
+from .models import AtomicFact, FactCandidate, default_importance
 from .retriever import segment_text
 from .summarizer import SCOPE_GLOBAL, mark_stale, try_rebuild
 from .validator import validate
 
 logger = logging.getLogger(__name__)
+
+# Confidence stamped on a candidate whose extractor supplied none. Unlike
+# ``importance`` this is not type-dependent: it answers "how sure are we this
+# was stated", which is uniform when the source is a direct user message.
+DEFAULT_CONFIDENCE = 0.7
 
 # Candidate lifecycle statuses.
 CAND_STATUS_APPLIED = "applied"
@@ -59,13 +64,26 @@ def _candidate_from_rpc_dict(
         turn_id: Turn to stamp when the dict omits it.
 
     Returns:
-        A populated candidate with a generated id.
+        A populated candidate with a generated id. When the dict omits
+        ``importance`` it defaults to the type's rank
+        (:func:`~atom_memory.models.default_importance`), and ``confidence``
+        defaults to :data:`DEFAULT_CONFIDENCE`.
     """
     import json as _json
 
     quals = d.get("qualifiers")
     if isinstance(quals, (dict, list)):
         quals = _json.dumps(quals, ensure_ascii=False)
+    memory_type = d.get("type") or "semantic"
+    # Priority falls back to the *type's* default rank rather than a flat 0.5:
+    # a uniform default makes every fact tie, which collapses ordering in the
+    # derived views to plain recency and hides what actually matters.
+    importance = d.get("importance")
+    if importance is None:
+        importance = default_importance(memory_type)
+    confidence = d.get("confidence")
+    if confidence is None:
+        confidence = DEFAULT_CONFIDENCE
     return FactCandidate(
         candidate_id=str(uuid.uuid4()),
         user_id=d.get("user_id") or user_id,
@@ -75,12 +93,12 @@ def _candidate_from_rpc_dict(
         predicate=d.get("predicate"),
         object=d.get("object"),
         qualifiers=quals,
-        confidence=d.get("confidence", 0.5),
-        importance=d.get("importance", 0.5),
+        confidence=confidence,
+        importance=importance,
         privacy=d.get("privacy", "private"),
         raw_text=d.get("raw_text"),
         idempotency_key=d.get("idempotency_key"),
-        type=d.get("type", "semantic"),
+        type=memory_type,
         content=d.get("content"),
     )
 

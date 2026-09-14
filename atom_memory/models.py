@@ -37,6 +37,51 @@ SUMMARY_EXCLUDED_KNOWLEDGE = ALL_KNOWLEDGE - SUMMARY_LIGHT_KNOWLEDGE
 # semantics and summary bucketing can recognise events reliably.
 PRED_EVENT = "事件"
 
+# Value meaning "no explicit importance signal was provided". Written by every
+# persistence path when the extractor (LLM or rule engine) omits the field, so
+# derived views must treat it as *absent* rather than as a real 0.5 score —
+# otherwise every fact ties and ordering collapses to pure recency.
+NEUTRAL_SCORE = 0.5
+
+# Fallback priority per memory type, used whenever a fact carries no explicit
+# importance signal (``importance == NEUTRAL_SCORE``). The order encodes what
+# stays valuable longest: durable rules and lessons outrank one-off events.
+# Kept here, next to the type discriminators, so both the Python write path and
+# the derived views share one authority without importing each other.
+TYPE_IMPORTANCE = {
+    TYPE_DECISION_RULE: 0.90,
+    TYPE_LESSON: 0.85,
+    TYPE_SOP: 0.80,
+    TYPE_PROCEDURAL: 0.70,
+    TYPE_SEMANTIC: 0.60,
+    TYPE_EPISODIC: 0.50,
+    TYPE_FEW_SHOT: 0.50,
+}
+
+# Precedence when several *buckets* compete for a shared token budget: durable
+# knowledge first, raw chronological events last.
+TYPE_ORDER = [
+    TYPE_DECISION_RULE,
+    TYPE_LESSON,
+    TYPE_SOP,
+    TYPE_PROCEDURAL,
+    TYPE_SEMANTIC,
+    TYPE_FEW_SHOT,
+    TYPE_EPISODIC,
+]
+
+
+def default_importance(memory_type: Optional[str]) -> float:
+    """Return the fallback importance for a memory type.
+
+    Args:
+        memory_type: A type discriminator, or ``None``/unknown.
+
+    Returns:
+        The type's fallback priority; ``NEUTRAL_SCORE`` for unknown types.
+    """
+    return TYPE_IMPORTANCE.get(memory_type or TYPE_SEMANTIC, NEUTRAL_SCORE)
+
 
 @dataclass
 class FactCandidate:

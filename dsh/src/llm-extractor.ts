@@ -50,9 +50,23 @@ export type ExtractFn = (text: string) => Promise<ExtractedCandidate[]>
 const EXTRACTION_SYSTEM = `You extract atomic memory facts from a user utterance.
 Return ONLY a JSON array. Each element is an object with keys:
 - "subject" (entity, use "用户" for the user), "predicate" (relation),
-- "object" (the value), and optionally "type" and "content".
+- "object" (the value), and optionally "type", "content", "importance",
+  "confidence".
 "type" is one of: semantic, procedural, episodic, sop, decision_rule, few_shot, lesson.
 For knowledge facts, put the full body in "content" and a short title in "object".
+
+Rank every fact so the memory view can show what matters first:
+- "importance" (0..1) is how durable and reusable the fact is.
+- "confidence" (0..1) is how sure you are it was actually stated.
+
+How to choose "type" - this matters, do not tag everything "semantic":
+- durable rule or convention ("should/must/always", a if-then policy) -> decision_rule
+- a distilled takeaway from a mistake or a hard-won finding -> lesson
+- an ordered procedure or how-to that must be followed step by step -> sop
+- a workflow or command sequence reported as how something is done -> procedural
+- a stable attribute or preference of the user -> semantic
+- episodic is ONLY for a dated, one-off thing that happened AND is worth
+  recalling in a later session. Use it sparingly.
 
 CRITICAL - only extract facts that are worth remembering long-term:
 - Save durable, reusable knowledge: decisions, workflows, procedures, lessons,
@@ -62,8 +76,18 @@ CRITICAL - only extract facts that are worth remembering long-term:
   turn: questions asked, complaints made, meta-commentary about the current
   conversation, the fact that a task was requested, how a system was debugged,
   or the wording of instructions the user gave. These are not stable facts.
+- Do NOT record what was done *during this session* as an episodic fact: what
+  was installed, tested, built, restarted, queried or "just done" is process
+  narration, not memory. Only the durable outcome (a decision, a rule, a
+  lesson, a working procedure) is worth saving, and it should be typed
+  accordingly instead of as episodic.
 - If the utterance contains no long-lived, reusable fact, return an empty
   array [].
+
+Use these importance values:
+- 0.9 durable rule, decision or lesson that should guide future work
+- 0.7 reusable procedure, workflow, or stable attribute/preference
+- 0.5 minor or uncertain detail
 
 Other rules: never fabricate facts not stated; break multi-fact utterances into
 multiple objects; keep preferences/attributes as (用户, 偏好, X). Do NOT include
@@ -323,6 +347,32 @@ export async function collectSseText(
 }
 
 /**
+ * Coerce a model-supplied score into a usable 0..1 number.
+ *
+ * Models routinely return scores as strings (`"0.9"`) or out of range; both
+ * would otherwise be dropped and the fact would fall back to the neutral
+ * default, tying it with every other fact and hiding it from the ordered view.
+ *
+ * @param value - The raw field value.
+ * @returns A clamped score, or `undefined` when nothing usable was supplied.
+ */
+function parseScore(value: unknown): number | undefined {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? clamp01(value) : undefined
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value.trim())
+    return Number.isFinite(parsed) ? clamp01(parsed) : undefined
+  }
+  return undefined
+}
+
+/** Clamp a number into the inclusive 0..1 range. */
+function clamp01(value: number): number {
+  return value < 0 ? 0 : value > 1 ? 1 : value
+}
+
+/**
  * Parse and sanitize the LLM's JSON output into typed candidates. Malformed or
  * non-object entries are dropped; a fully-invalid payload yields ``[]`` so the
  * caller can fall back to rules.
@@ -354,8 +404,8 @@ export function parseCandidates(raw: string): ExtractedCandidate[] {
       type: typeof c.type === 'string' ? c.type : undefined,
       content: typeof c.content === 'string' ? c.content : undefined,
       qualifiers: c.qualifiers,
-      confidence: typeof c.confidence === 'number' ? c.confidence : undefined,
-      importance: typeof c.importance === 'number' ? c.importance : undefined,
+      confidence: parseScore(c.confidence),
+      importance: parseScore(c.importance),
     })
   }
   return out

@@ -304,19 +304,31 @@ class AtomMem:
             )
         return pending
 
-    async def memory_md(self, user_id: str, max_tokens: int = 1500) -> str:
+    async def memory_md(
+        self,
+        user_id: str,
+        max_tokens: int = 1500,
+        detail: bool = True,
+    ) -> str:
         """Render the user's ``memory.md`` derived view.
 
         Args:
             user_id: The user whose memory is rendered.
-            max_tokens: Estimated token cap for the body.
+            max_tokens: Estimated token cap for the rendered text, footer
+                included.
+            detail: ``True`` (the default) lists every active fact with its
+                ``fact_id``. ``False`` renders the compact, type-grouped digest
+                the dsh host freezes into the session system prompt — no
+                ``fact_id`` (the UUIDs cost more tokens than they carry
+                information for the model) and priority-ordered rather than
+                recency-ordered.
 
         Returns:
-            A markdown string listing active facts with their ``fact_id``s.
+            A markdown string.
         """
         if self.db is None:
             raise RuntimeError("AtomMem is not started; call start() first")
-        return generate_memory_md(self.db, user_id, max_tokens)
+        return generate_memory_md(self.db, user_id, max_tokens, detail)
 
     async def user_md(self, user_id: str, max_tokens: int = 800) -> str:
         """Render the user's profile as markdown.

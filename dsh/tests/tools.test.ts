@@ -147,6 +147,20 @@ describe('memory tools user scope', () => {
     expect(bridge.call.mock.calls.at(-1)![1]!.user_id).toBe('global')
   })
 
+  it('memory_memory_md asks for the detail depth, not the injected compact one', async () => {
+    const { bridge, registered } = setup()
+    bridge.call.mockResolvedValue('')
+
+    const memMd = registered.find((d) => d.name === 'memory_memory_md')!
+    await memMd.execute({}, execWithSession('session-DDD-2'))
+
+    // The tool/settings view keeps fact_id references; only the frozen prompt
+    // snapshot renders the compact digest.
+    const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    expect(method).toBe('memory_md')
+    expect(params.detail).toBe(true)
+  })
+
   it('an explicit user argument overrides the fallback scope', async () => {
     const { bridge, registered } = setup()
     const recall = registered.find((d) => d.name === 'memory_recall')!
@@ -174,10 +188,29 @@ describe('memory_add LLM-first extraction', () => {
     const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
     // Must NOT go through the rules-only `add` path (which drops free-form text).
     expect(method).toBe('persist_candidates')
-    expect(params.candidates).toEqual(candidates)
+    // An explicit remember is the strongest durability signal, so the tool sets
+    // an importance floor: without a signal every fact ties and the ordered
+    // memory view degenerates to recency.
+    expect(params.candidates).toEqual([
+      { ...candidates[0], importance: 0.9, confidence: 0.9 },
+    ])
     expect(params.user_id).toBe('global')
     expect(params.session_id).toBe('session-FFF')
     expect(result.candidate_id).toBe('cand-1')
+  })
+
+  it('never lowers an importance the extractor already ranked higher', async () => {
+    const extract = vi.fn(async () => [
+      { subject: '用户', predicate: '决定', object: '关键规则', importance: 0.95 },
+    ])
+    const { bridge, registered } = setup(extract)
+    bridge.call.mockResolvedValue({ candidate_id: 'cand-hi' })
+
+    const add = registered.find((d) => d.name === 'memory_add')!
+    await add.execute({ content: '关键规则' }, execWithSession('session-HHH2'))
+
+    const [, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
+    expect((params.candidates as any[])[0]!.importance).toBe(0.95)
   })
 
   it('falls back to the rule path when the LLM returns no candidates', async () => {

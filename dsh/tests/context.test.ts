@@ -69,6 +69,9 @@ describe('registerMemoryContext', () => {
     expect(bridge.call).toHaveBeenCalledTimes(1) // frozen: no re-read
     expect(bridge.call.mock.calls[0]![0]).toBe('memory_md')
     expect(bridge.call.mock.calls[0]![1]).toMatchObject({ user_id: 'global', max_tokens: 1500 })
+    // The injected snapshot must be the compact depth: it is paid for on every
+    // request, so it drops the fact_id UUIDs and groups by memory type.
+    expect(bridge.call.mock.calls[0]![1]).toMatchObject({ detail: false })
     // inserted directly after the awareness section
     expect(first.sections.map((s: FakeSection) => s.name)).toEqual([
       'atom-memory-awareness', 'atom-memory-snapshot',
