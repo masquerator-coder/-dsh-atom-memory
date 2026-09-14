@@ -278,10 +278,12 @@ The plugin ships a browser client-plugin (`dsh/src/client/`) that adds a
 5. **Backup & restore** — export memory to / import from a JSON file
    (`backup` / `restore`, replace semantics).
 
-The client bundle itself is produced by the harness toolchain during a
-dsh web development build (`dev:web`); the repo delivers the `src/client`
-source + the `dsh.client` declaration, typechecked locally via
-`tsconfig.client.json`.
+The browser bundle ships **prebuilt** as `dsh/lib/client.js` in the harness's
+`window.__ModuleLoader__.load({id, factory(require)})` module-table format
+(framework deps stay external `require()` rows; the plugin's own code is
+inlined). dsh serves it directly without a dev:web rebuild, so a git install
+shows the settings section immediately. The `dsh/src/client` source is kept and
+typechecked locally via `tsconfig.client.json`.
 
 Run `python -m pytest tests/test_rpc.py` to exercise the wire protocol end to
 end, and the `dsh/` package's own vitest + build gate for the host side.

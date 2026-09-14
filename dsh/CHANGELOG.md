@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Fixed
+- **设置页不出现「记忆」按钮**：dsh 宿主把 `exports["./client"]` 指向的文件**原样
+  当作浏览器 bundle 服务**（`client-modules` 直接 `readFileSync`，不编译 TS/TSX），
+  且只对 harness 自带 `packages/client/*` 构建 client bundle；此前本插件把
+  `exports["./client"]` 指向 `src/client/index.ts`（源码头），浏览器拿到的是
+  不可执行的 TS/TSX，设置分区从未挂载。修复：`tsdown.config.ts` 产出符合
+  `window.__ModuleLoader__.load({id:"dsh-atom-memory", factory(require)})`
+  收缩格式的**预构建 bundle** `lib/client.js`（framework 依赖走 module-table
+  `require()` 外链、插件自身内联，`exports.apply`/`exports.inject` 收尾），
+  `exports["./client"]` 改为 `./lib/client.js`；样式自注入（`src/client/styles.ts`，
+  `data-plugin` 防重复）。git 安装后无需 dev:web 重建即可显示设置分区。
 - **`lib/index.mjs` 无法被 Node 加载（dsh 启动崩溃）**：rolldown/tsdown 会把
   `@Remote` 装饰器原样打进 ESM 产物，dsh 宿主以普通 Node ESM 加载时报
   `SyntaxError: Invalid or unexpected token`（`lib/index.mjs:989` 的

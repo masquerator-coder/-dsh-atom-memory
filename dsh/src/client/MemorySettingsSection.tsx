@@ -4,8 +4,32 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   InjectFace, PropsLocale, PropsRuntime,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import css from './MemorySettingsSection.module.css'
+/**
+ * Inline stylesheet (hand-Rolled). The browser bundle is built standalone
+ * (tsdown, no lightningcss CSS-modules pass), so the class map lives here as a
+ * plain object instead of a `.module.css` import — identical class names, no
+ * build-time CSS plugin required.
+ */
+const css = {
+  section: 'atom-memory-section',
+  header: 'atom-memory-header',
+  error: 'atom-memory-error',
+  status: 'atom-memory-status',
+  block: 'atom-memory-block',
+  switchRow: 'atom-memory-switch-row',
+  radioRow: 'atom-memory-radio-row',
+  inputs: 'atom-memory-inputs',
+  hint: 'atom-memory-hint',
+  empty: 'atom-memory-empty',
+  add: 'atom-memory-add',
+  actions: 'atom-memory-actions',
+  fileLabel: 'atom-memory-file-label',
+  factRow: 'atom-memory-fact-row',
+  badge: 'atom-memory-badge',
+  factFields: 'atom-memory-fact-fields',
+}
 import { LOCALE_NS, type MemorySettingsLocaleKey } from './locales.ts'
+import { ensureMemorySettingsStyle } from './styles.ts'
 import type { MemorySettingsFace, MemorySettingsState } from './memory-settings-controller.ts'
 
 /** Declare the section's locale dictionary namespace (type-only merge). */
@@ -40,6 +64,7 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   useEffect(() => {
     if (loadedRef.current) return
     loadedRef.current = true
+    ensureMemorySettingsStyle()
     void props.refreshData()
   }, [props])
 

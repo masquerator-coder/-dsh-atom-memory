@@ -64,11 +64,15 @@ pnpm build       # -> lib/index.mjs
 | 记忆与编辑 | 原子事实列表查看/编辑（SPO/content/type），摘要查看 | `remote.atomMemory.listFacts/editFact` |
 | 记忆备份与恢复 | 导出 JSON / 上传导入（replace 语义） | `remote.atomMemory.backup/restore` |
 
-> **浏览器端构建说明**：client-plugin 的浏览器 bundle 由 dsh 自身工具链
-> （`packages/client/tsdown.client.ts`，经 `window.__ModuleLoader__` 装配）生成，
-> 不在本仓库内打包。本仓库交付 `src/client` 源码头 + `package.json` 的
-> `dsh.client` 声明（`exports["./client"]`）。本地 `pnpm run typecheck` 会用
-> `tsconfig.client.json` 对客户端源码头做类型校验。
+> **浏览器端构建说明**：dsh 宿主对 `exports["./client"]` 是**原样当作浏览器
+> bundle 服务**的（`client-modules` 直接 `readFileSync` 该文件，不编译 TS/TSX），
+> 且只对 harness 自带的 `packages/client/*` 包构建 client bundle——外部 git 插件
+> 必须自带一个**已构建好**的、符合 `window.__ModuleLoader__.load({id, factory(require)})`
+> 收缩格式的 `lib/client.js`。本仓库的 `tsdown.config.ts` 会产出一个这样的产物：
+> framework（react / cordis / dsh-client-*）作为 module-table `require()` 外链，
+> 插件自身代码内联；`exports["./client"]` 指向 `./lib/client.js`。故 git 安装后
+> 无需再跑 dsh 的 dev:web 构建即可在设置页出现「记忆」分区。`src/client` 源码头仍保留，
+> 用 `tsconfig.client.json` 做类型校验。
 
 ## 工具（模型可见面）
 
