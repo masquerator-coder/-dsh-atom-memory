@@ -174,10 +174,18 @@ instructions.`）：工具指引只写在 awareness 段，两段是相邻注入�
 ## 开发
 
 ```bash
-pnpm run typecheck   # tsc --noEmit
+pnpm run typecheck   # tsc --noEmit（host）+ tsc -p tsconfig.client.json（client）
 pnpm run test        # vitest（bridge 用假子进程，hermetic）
-pnpm run build       # tsdown -> lib/
+pnpm run build       # tsdown -> lib/index.mjs，再 downlevel 装饰器（scripts/transpile-decorators.mjs）
 ```
+
+> **装饰器 downlevel**：dsh 宿主用普通 Node ESM 加载 `lib/index.mjs`，而
+> rolldown/tsdown 会把 `@Remote` 装饰器原样打进产物，导致 Node 解析报
+> `Invalid or unexpected token`（输出文件本身即无法被 `node import`）。
+> 构建脚本在 tsdown 后用 Babel 2023-11 装饰器插件把 `@Remote` 编译为
+> `_applyDecs`/`_initProto` 辅助调用（等价于 harness 用 tsc 预编译
+> `lib/types` 的效果），产物保持纯 JS 可加载。已由 `scripts/transpile-decorators.mjs`
+> + 加载断言覆盖。
 
 端到端验证（真实 Python 子进程）：见根 README 的 <a href="#integration">桥接集成</a>。
 

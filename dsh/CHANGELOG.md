@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`lib/index.mjs` 无法被 Node 加载（dsh 启动崩溃）**：rolldown/tsdown 会把
+  `@Remote` 装饰器原样打进 ESM 产物，dsh 宿主以普通 Node ESM 加载时报
+  `SyntaxError: Invalid or unexpected token`（`lib/index.mjs:989` 的
+  `@Remote`）。修复：构建脚本在 tsdown 后用 Babel 2023-11 装饰器插件
+  （`scripts/transpile-decorators.mjs` + `@babel/plugin-proposal-decorators`）
+  把 `@Remote` downlevel 为 `_applyDecs`/`_initProto` 辅助调用（等价于
+  harness 以 tsc 预编译 `lib/types` 的效果）；`bindTypertRemote` 不存快照、
+  Gateway 惰性读 `remoteMethods`，故构造器里 `_initProto` 标记原型顺序无碍。
+  已由 `pnpm run build` 后的 node import 断言覆盖。
+
 ### Added
 - **记忆设置界面（dsh Web 设置页新增「记忆」分区/面板）**：新增浏览器 client-plugin（`src/client/`，`package.json` 声明 `dsh.client` 与 `exports["./client"]`），在 dsh 设置侧边栏贡献独立「记忆」分区，面板含五大功能：
   1. **记忆开关**：`enabled` 主开关 → 写入 `atom-memory` 设置命名空间，host 侧经 `installSection`+`setSource`+`onChange` 运行时热切换（关：停捕获/停上下文注入/工具拒绝；开：即时恢复，无需重启）。
