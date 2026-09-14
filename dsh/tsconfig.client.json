@@ -5,8 +5,9 @@
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
-    "lib": ["ES2022"],
-    "types": ["node"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["react", "node"],
     "strict": true,
     "noImplicitAny": true,
     "skipLibCheck": true,
@@ -15,6 +16,5 @@
     "moduleDetection": "force",
     "noEmit": true
   },
-  "include": ["src", "tests"],
-  "exclude": ["src/client"]
+  "include": ["src/client"]
 }

@@ -4,3 +4,13 @@
 # build script would fail that sub-install.
 allowBuilds:
   esbuild: true
+overrides:
+  # The dsh graph requests several @deepseek-ai/* transitive packages in
+  # prerelease-ambiguous ranges (>=0.1.5 <0.2.0-0) that the registry mirror
+  # cannot satisfy; pin the published -rc.2 exactly so the standalone workspace
+  # installs. Only applied to the rc.2 line's transitive utilities — the host
+  # entry packages (dsh-llm/dsh-tools/...) stay on their 0.1.3-alpha.2 line.
+  "@deepseek-ai/dsh-invariants": "0.1.5-rc.2"
+  "@deepseek-ai/dsh-scope": "0.1.5-rc.2"
+  "@deepseek-ai/dsh-brand": "0.1.5-rc.2"
+  "@deepseek-ai/dsh-deque": "0.1.5-rc.2"

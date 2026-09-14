@@ -18,13 +18,14 @@ import sqlite3
 import uuid
 from typing import Optional
 
+from .backup import export_memory, import_memory, validate_backup
 from .config import MemConfig
 from .db import now_ms, open_db
 from .embedder import Embedder
 from .memory_md import generate_memory_md
 from .models import SUMMARY_EXCLUDED_KNOWLEDGE
 from .profile import derive_profile_from_facts, profile_md
-from .retriever import Retriever, estimate_tokens
+from .retriever import Retriever, estimate_tokens, segment_text
 from .summarizer import SCOPE_GLOBAL, rebuild_summary
 from .worker import Worker
 
@@ -551,6 +552,327 @@ class AtomMem:
                 ),
             )
         return {"candidate_id": candidate_id, "status": "pending", "trace_id": str(uuid.uuid4())}
+
+    # --- UI-facing edit / backup / restore surface ---------------------------
+
+    def list_facts(
+        self,
+        user_id: str,
+        include_retracted: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Paginate a user's facts in descending recency for the settings UI.
+
+        Args:
+            user_id: The user whose facts are listed.
+            include_retracted: Whether to include soft-deleted rows.
+            limit: Maximum rows returned.
+            offset: Row offset for paging.
+
+        Returns:
+            ``{"facts", "total", "offset", "limit"}`` where each fact carries
+            ``fact_id`` / ``subject`` / ``predicate`` / ``object`` / ``type`` /
+            ``content`` / ``confidence`` / ``importance`` / ``status`` /
+            ``created_at``.
+        """
+        if self.db is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        limit = max(1, min(int(limit), 200))
+        offset = max(0, int(offset))
+        status_clause = "AND status = 'active'" if not include_retracted else ""
+        total = self.db.execute(
+            f"SELECT COUNT(*) AS n FROM facts WHERE user_id = ? {status_clause}",
+            (user_id,),
+        ).fetchone()["n"]
+        rows = self.db.execute(
+            f"SELECT fact_id, subject, predicate, object, type, content, "
+            f"confidence, importance, status, created_at FROM facts "
+            f"WHERE user_id = ? {status_clause} "
+            f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
+        ).fetchall()
+        facts = [
+            {
+                "fact_id": r["fact_id"],
+                "subject": r["subject"],
+                "predicate": r["predicate"],
+                "object": r["object"],
+                "type": r["type"] or "semantic",
+                "content": r["content"],
+                "confidence": r["confidence"],
+                "importance": r["importance"],
+                "status": r["status"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+        return {"facts": facts, "total": total, "offset": offset, "limit": limit}
+
+    async def edit_fact(
+        self,
+        user_id: str,
+        fact_id: str,
+        subject: Optional[str] = None,
+        predicate: Optional[str] = None,
+        object: Optional[str] = None,
+        content: Optional[str] = None,
+        type: Optional[str] = None,
+    ) -> dict:
+        """Directly update an active fact (user-invoked UI edit).
+
+        Fields given as ``None`` are left unchanged. Editing re-embeds the
+        fact's searchable text so retrieval and FTS stay consistent, then marks
+        summaries stale (read paths refresh them on demand). Returns the
+        updated fact.
+
+        Args:
+            user_id: Owner of the fact.
+            fact_id: The active fact to edit.
+            subject / predicate / object: SPO triple fields to change.
+            content: Knowledge body to set (use a sentinel to clear).
+            type: Memory type to set.
+
+        Returns:
+            The updated fact dict, or raises ``ValueError`` if the fact is not
+            an active row owned by ``user_id``.
+        """
+        if self.db is None or self.embedder is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        row = self.db.execute(
+            "SELECT fact_id FROM facts WHERE user_id = ? AND fact_id = ? "
+            "AND status = 'active'",
+            (user_id, fact_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"no active fact {fact_id} for user {user_id}")
+
+        # Apply ordered updates directly to the row.
+        updates: dict = {}
+        if subject is not None:
+            updates["subject"] = str(subject).strip()
+        if predicate is not None:
+            updates["predicate"] = str(predicate).strip()
+        if object is not None:
+            updates["object"] = str(object).strip()
+        if content is not None:
+            updates["content"] = content or None
+        if type is not None:
+            updates["type"] = str(type).strip() or "semantic"
+
+        if updates:
+            assignments = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [user_id, fact_id]
+            with self.db:
+                self.db.execute(
+                    f"UPDATE facts SET {assignments} "
+                    f"WHERE user_id = ? AND fact_id = ? AND status = 'active'",
+                    values,
+                )
+            await self._resync_fact_vectors(user_id, fact_id)
+            self._mark_and_refresh(user_id)
+
+        return self._fetch_fact(user_id, fact_id)
+
+    def list_profile(self, user_id: str) -> dict:
+        """List a user's profile rows for the settings UI.
+
+        Args:
+            user_id: Owner of the profile.
+
+        Returns:
+            ``{"profile": [...]}`` rows with ``section`` / ``key`` / ``value`` /
+            ``source`` / ``privacy``.
+        """
+        if self.db is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        rows = self.db.execute(
+            "SELECT section, key, value, source, privacy FROM user_profile "
+            "WHERE user_id = ? ORDER BY section, key",
+            (user_id,),
+        ).fetchall()
+        return {
+            "profile": [
+                {
+                    "section": r["section"],
+                    "key": r["key"],
+                    "value": r["value"],
+                    "source": r["source"],
+                    "privacy": r["privacy"],
+                }
+                for r in rows
+            ]
+        }
+
+    def upsert_profile(
+        self,
+        user_id: str,
+        section: str,
+        key: str,
+        value: str,
+    ) -> dict:
+        """Add or update one user-profile row (user-invoked UI edit).
+
+        Rows written here are tagged with the most-authoritative ``user_explicit``
+        source so they are never silently downgraded by later derived writes.
+
+        Args:
+            user_id: Owner of the profile.
+            section: Profile section (predicate).
+            key: Key within the section (use ``"value"`` for simple rows).
+            value: The stored value.
+
+        Returns:
+            ``{"ok": True}``.
+        """
+        if self.db is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        section = str(section).strip()
+        key = str(key).strip()
+        value = str(value).strip()
+        if not section or not key:
+            raise ValueError("profile section and key are required")
+        conn = self.db
+        conn.execute(
+            "INSERT INTO user_profile(user_id, section, key, value, source, "
+            "confidence, privacy, updated_at) VALUES (?, ?, ?, ?, "
+            "'user_explicit', 0.9, 'private', ?) "
+            "ON CONFLICT(user_id, section, key) DO UPDATE SET "
+            "value = excluded.value, source = 'user_explicit', "
+            "confidence = 0.9, updated_at = excluded.updated_at",
+            (user_id, section, key, value, now_ms()),
+        )
+        conn.commit()
+        return {"ok": True}
+
+    def delete_profile(self, user_id: str, section: str, key: str) -> dict:
+        """Delete one user-profile row.
+
+        Args:
+            user_id: Owner of the profile.
+            section: Profile section.
+            key: Key within the section.
+
+        Returns:
+            ``{"ok": True, "deleted": n}``.
+        """
+        if self.db is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        cur = self.db.execute(
+            "DELETE FROM user_profile WHERE user_id = ? AND section = ? AND key = ?",
+            (user_id, section, key),
+        )
+        self.db.commit()
+        return {"ok": True, "deleted": cur.rowcount}
+
+    def backup(self, user_id: str) -> dict:
+        """Export the user's memory as a portable JSON snapshot.
+
+        Args:
+            user_id: Owner of the memory.
+
+        Returns:
+            The serializable backup dict (see :mod:`atom_memory.backup`).
+        """
+        if self.db is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        return export_memory(self.db, user_id)
+
+    async def restore(self, user_id: str, payload: dict) -> dict:
+        """Import a backup snapshot, replacing the user's current memory.
+
+        Uses replace semantics (see :mod:`atom_memory.backup`): the user's live
+        facts / profile are soft-cleared then the snapshot is written back.
+
+        Args:
+            user_id: The user whose memory is replaced.
+            payload: A validated backup dict.
+
+        Returns:
+            ``{"facts_written", "profile_written"}``.
+        """
+        if self.db is None or self.embedder is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        payload = validate_backup(payload)
+        # import_memory is async and keeps DB writes on this (loop) thread,
+        # offloading only the embedding to worker threads.
+        result = await import_memory(
+            self.db,
+            user_id,
+            payload,
+            self.embedder.embed_one,
+        )
+        self._mark_and_refresh(user_id)
+        return result
+
+    # --- edit helpers ---------------------------------------------------------
+
+    def _fetch_fact(self, user_id: str, fact_id: str) -> dict:
+        row = self.db.execute(
+            "SELECT fact_id, subject, predicate, object, type, content, "
+            "confidence, importance, status, created_at FROM facts "
+            "WHERE user_id = ? AND fact_id = ?",
+            (user_id, fact_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"no fact {fact_id} for user {user_id}")
+        return {
+            "fact_id": row["fact_id"],
+            "subject": row["subject"],
+            "predicate": row["predicate"],
+            "object": row["object"],
+            "type": row["type"] or "semantic",
+            "content": row["content"],
+            "confidence": row["confidence"],
+            "importance": row["importance"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+        }
+
+    async def _resync_fact_vectors(self, user_id: str, fact_id: str) -> None:
+        """Re-derive FTS + vector entries for one fact after an edit.
+
+        The embedding is CPU-bound model inference, so it runs in a worker
+        thread exactly like the library's own write path.
+        """
+        row = self.db.execute(
+            "SELECT subject, predicate, object, content FROM facts "
+            "WHERE user_id = ? AND fact_id = ?",
+            (user_id, fact_id),
+        ).fetchone()
+        if row is None:
+            return
+        searchable = (
+            f"{row['subject']} {row['predicate']} {row['object']} "
+            f"{(row['content'] or '')}"
+        ).strip()
+        embed_text = searchable or " "
+        blob = await asyncio.to_thread(self.embedder.embed_one, embed_text)
+        with self.db:
+            self.db.execute("DELETE FROM facts_fts WHERE fact_id = ?", (fact_id,))
+            self.db.execute(
+                "DELETE FROM facts_vec WHERE fact_id = ?", (fact_id,)
+            )
+            self.db.execute(
+                "INSERT INTO facts_fts(fact_id, text) VALUES (?, ?)",
+                (fact_id, " ".join(segment_text(searchable))),
+            )
+            self.db.execute(
+                "INSERT INTO facts_vec(fact_id, embedding) VALUES (?, ?)",
+                (fact_id, blob),
+            )
+
+    def _mark_and_refresh(self, user_id: str) -> None:
+        """Mark summaries stale and enqueue a debounced rebuild after an edit.
+
+        Read paths (``memory_md`` / ``recall`` / ``summary``) refresh on demand
+        via ``_ensure_summary``, so this keeps derived views consistent even
+        before the worker rebuild lands.
+        """
+        if self._worker is not None:
+            self._worker._after_mutation(user_id)
+        else:
+            mark_stale(self.db, user_id)
 
     def stats(self, user_id: str) -> dict:
         """Return aggregate counters for a user.

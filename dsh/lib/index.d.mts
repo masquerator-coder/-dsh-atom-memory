@@ -8,6 +8,13 @@ interface Config {
   pythonBin?: string;
   /** Auto-start the bridge on plugin load (deployment-time switch). */
   autostart?: boolean;
+  /** Master memory switch: when false the plugin is inert (no capture/context/tools). */
+  enabled?: boolean;
+  /** Manual LLM extraction model override; omit or leave provider empty to follow dsh default. */
+  extractionModel?: {
+    provider?: string;
+    model?: string;
+  };
   /** Whether the session/durable capture hooks (turn/end, user/message) run. */
   captureEnabled?: boolean;
   /** Whether the LLM-first extractor is wired to the dsh default model. */
@@ -42,9 +49,9 @@ declare const Config: z<Config>;
 declare const name = "dsh-atom-memory";
 /**
  * Required services. `tools` and `systemPrompt` are the only hard
- * dependencies — matching the reference dsh-memory plugin. `llm` and
- * `agentDefaultModel` are read via `ctx.get`, never injected (they are
- * optional, model-versioned services).
+ * dependencies — matching the reference dsh-memory plugin. `llm`,
+ * `agentDefaultModel` and `settings` are read via `ctx.get`, never injected
+ * (they are optional, model-versioned, or deployment-determined services).
  */
 declare const inject: readonly ["tools", "systemPrompt"];
 declare function apply(ctx: Context, config: Config): void;

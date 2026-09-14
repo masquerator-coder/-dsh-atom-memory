@@ -108,29 +108,49 @@ function isEphemeral(c: Partial<ExtractedCandidate>): boolean {
 
 /**
  * Build the LLM-first extraction function bound to the dsh `llm` service and
- * the current default model.
+ * the configured model.
  *
- * @returns ``undefined`` when no `llm` service or no default model is
+ * Model resolution: a manual ``extractionModel`` override wins when it names a
+ * provider, otherwise the dsh current-preset default selection is used. When
+ * neither yields a usable provider/model, ``undefined`` is returned and the
+ * caller falls back to the Python rule engine (never a silent drop).
+ *
+ * @returns ``undefined`` when no `llm` service and no usable model is
  *   available, so callers can disable the LLM path cleanly.
  */
 export function buildLlmExtractor(
   ctx: Context,
-  opts: { maxTokens?: number } = {},
+  opts: {
+    maxTokens?: number
+    /** Manual provider/model override; wins over the dsh default selection. */
+    modelOverride?: () => { provider?: string; model?: string } | undefined
+    /** When it returns false the extractor yields nothing (caller falls back). */
+    enabled?: () => boolean
+  } = {},
 ): ExtractFn | undefined {
   const llm = ctx.get('llm') as LlmLike | undefined
+  if (llm === undefined) return undefined
   const def = ctx.get('agentDefaultModel') as AgentDefaultModelLike | undefined
-  if (llm === undefined || def === undefined) return undefined
-  let selection: { provider: string; model: string } | undefined
-  try {
-    selection = def.currentSelection()
-  } catch {
-    selection = undefined
-  }
-  if (selection === undefined || !selection.provider || !selection.model) {
-    return undefined
-  }
+  const modelOverride = opts.modelOverride?.()
 
+  let provider = modelOverride?.provider?.trim() ?? ''
+  let model = modelOverride?.model?.trim() ?? ''
+  if (!provider && def !== undefined) {
+    try {
+      const selection = def.currentSelection()
+      if (selection !== undefined) {
+        provider = selection.provider
+        model = selection.model
+      }
+    } catch {
+      /* ignore; fall through to rules */
+    }
+  }
+  if (!provider || !model) return undefined
+
+  const enabled = opts.enabled
   return async (text: string): Promise<ExtractedCandidate[]> => {
+    if (enabled?.() === false) return []
     const messages = [
       createUserMessage({
         content: [{ type: 'text', text }],
@@ -138,8 +158,8 @@ export function buildLlmExtractor(
       }),
     ]
     const options: GenerateOptions = {
-      provider: selection!.provider,
-      model: selection!.model,
+      provider,
+      model,
       messages: messages as never[],
       system: EXTRACTION_SYSTEM,
       maxTokens: opts.maxTokens ?? 2048,

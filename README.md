@@ -259,7 +259,29 @@ AtomMem  (in-process memory: worker, retriever, summaries …)
   unload so the worker flushes and the DB closes cleanly.
 
 Methods: `start`, `stop`, `health`, `add`, `recall`, `replace`, `forget`,
-`forget_all`, `persist_candidates`, `memory_md`, `user_md`, `stats`.
+`forget_all`, `persist_candidates`, `memory_md`, `user_md`, `stats`,
+`list_facts`, `edit_fact`, `list_profile`, `upsert_profile`, `delete_profile`,
+`backup`, `restore`.
+
+### Memory settings (dsh Web)
+
+The plugin ships a browser client-plugin (`dsh/src/client/`) that adds a
+**记忆/En Memory** section to the dsh settings sidebar, covering:
+
+1. **Memory master switch** — a runtime toggle (`enabled`) applied live via the
+   `atom-memory` settings namespace; no restart needed.
+2. **LLM extraction model** — follow the dsh default model or pin a
+   provider/model override (`extractionModel`).
+3. **User profile editing** — add/edit/delete profile rows (`upsert_profile` /
+   `delete_profile`), written back as highest-priority `user_explicit`.
+4. **Memory & edit** — view and edit atomic facts (`list_facts` / `edit_fact`).
+5. **Backup & restore** — export memory to / import from a JSON file
+   (`backup` / `restore`, replace semantics).
+
+The client bundle itself is produced by the harness toolchain during a
+dsh web development build (`dev:web`); the repo delivers the `src/client`
+source + the `dsh.client` declaration, typechecked locally via
+`tsconfig.client.json`.
 
 Run `python -m pytest tests/test_rpc.py` to exercise the wire protocol end to
 end, and the `dsh/` package's own vitest + build gate for the host side.

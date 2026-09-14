@@ -1,0 +1,254 @@
+"""Backup and restore of a user's memory, as portable JSON.
+
+A backup is a *lossy-but-faithful* snapshot of the derived views the user can
+read and edit in the UI: the active atomic facts (with their SPO triples, type,
+content body, importance and timestamps), the user-profile rows, and the
+current aggregate summaries. It never carries credentials or other secrets —
+the library only stores facts and derived views.
+
+Restore uses "replace semantics": the target user's active facts and profile
+rows are soft-retracted first, then the snapshot is written back as new
+``user_explicit`` facts and profile rows. This keeps the restore deterministic
+and avoids resurrecting stale duplicates against live memory, at the cost of
+losing fact identity across a restore (ids are regenerated). It honours the
+library's soft-delete invariant on the old rows and always stays committed
+inside one transaction so a failed import leaves memory untouched.
+
+@module atom_memory/backup
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+import uuid
+from typing import Any, Callable, Dict, Optional
+
+from .db import now_ms
+from .retriever import segment_text
+
+# Snapshot format version, bumped on any structurally breaking change.
+BACKUP_VERSION = 1
+
+# Column groups round-tripped through a snapshot. `user_id` is intentionally
+# excluded from facts/profile: restore re-targets everything to the caller's
+# `target_user_id`, so embeding the source owner would be wrong.
+_FACT_KEYS = (
+    "fact_id", "session_id", "subject", "predicate", "object",
+    "qualifiers", "confidence", "importance", "privacy", "source_type",
+    "type", "content", "observed_at", "created_at",
+)
+_PROFILE_KEYS = (
+    "section", "key", "value", "source", "confidence", "privacy",
+    "updated_at",
+)
+
+
+def export_memory(conn: sqlite3.Connection, user_id: str) -> dict:
+    """Serialize one user's active memory to a portable dict.
+
+    Only ``active`` facts are exported (retracted / superseded are excluded),
+    and only non-stale summaries. Serialization is deterministic (ordered
+    queries), so two exports of unchanged memory compare equal.
+
+    Args:
+        conn: The SQLite connection.
+        user_id: Owner of the memory to export.
+
+    Returns:
+        A dict shaped for ``json.dumps``:
+        ``{"version", "exported_at", "user_id", "facts", "profile", "summaries"}``.
+    """
+    fact_rows = conn.execute(
+        "SELECT fact_id, session_id, subject, predicate, object, qualifiers, "
+        "confidence, importance, privacy, source_type, type, content, "
+        "observed_at, created_at FROM facts "
+        "WHERE user_id = ? AND status = 'active' "
+        "ORDER BY created_at ASC",
+        (user_id,),
+    ).fetchall()
+    facts = [{k: r[k] for k in _FACT_KEYS} for r in fact_rows]
+
+    profile_rows = conn.execute(
+        "SELECT user_id, section, key, value, source, confidence, privacy, "
+        "updated_at FROM user_profile WHERE user_id = ? ORDER BY section, key",
+        (user_id,),
+    ).fetchall()
+    profile = [{k: r[k] for k in _PROFILE_KEYS} for r in profile_rows]
+
+    summary_rows = conn.execute(
+        "SELECT scope, theme, text, fact_ids, version FROM summaries "
+        "WHERE user_id = ? AND stale = 0 ORDER BY scope",
+        (user_id,),
+    ).fetchall()
+    summaries = [
+        {"scope": r["scope"], "theme": r["theme"], "text": r["text"],
+         "fact_ids": r["fact_ids"], "version": r["version"]}
+        for r in summary_rows
+    ]
+
+    return {
+        "version": BACKUP_VERSION,
+        "exported_at": now_ms(),
+        "user_id": user_id,
+        "facts": facts,
+        "profile": profile,
+        "summaries": summaries,
+    }
+
+
+def validate_backup(payload: Any) -> Dict[str, Any]:
+    """Validate a parsed backup payload, raising ValueError on a bad shape.
+
+    Args:
+        payload: The decoded JSON object handed to restore.
+
+    Returns:
+        The payload, narrowed to the expected dict shape for import.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("backup payload must be a JSON object")
+    version = payload.get("version")
+    if version != BACKUP_VERSION:
+        raise ValueError(
+            f"unsupported backup version {version!r} (expected {BACKUP_VERSION})"
+        )
+    for key in ("facts", "profile", "summaries"):
+        if not isinstance(payload.get(key), list):
+            raise ValueError(f"backup field {key!r} must be a list")
+    return payload
+
+
+async def import_memory(
+    conn: sqlite3.Connection,
+    target_user_id: str,
+    payload: dict,
+    embed_func: Callable[[str], bytes],
+) -> Dict[str, Any]:
+    """Import a snapshot into one user's memory with replace semantics.
+
+    The target user's active facts are soft-retracted and their profile rows
+    deleted within the same transaction as the insert, so a failed import
+    (raised before commit) leaves memory untouched. Facts are re-embedded via
+    ``embed_func``. The SQLite connection is used only on the caller's thread
+    (SQLite is not thread-safe across threads), while the CPU-bound embedding
+    calls run in worker threads — mirroring the library's own write path.
+
+    Args:
+        conn: The SQLite connection (must stay on one thread).
+        target_user_id: The user whose memory is replaced.
+        payload: A validated backup dict from :func:`export_memory`.
+        embed_func: ``callable(searchable_text) -> embedding_bytes``.
+
+    Returns:
+        ``{"facts_written", "profile_written"}`` counts.
+    """
+    user_id = target_user_id
+    now = now_ms()
+
+    with conn:
+        # Replace semantics: clear the user's live derived state first, then
+        # write the snapshot. Soft-retract keeps provenance of what was cleared.
+        conn.execute(
+            "UPDATE facts SET status = 'retracted' WHERE user_id = ? "
+            "AND status IN ('active', 'superseded')",
+            (user_id,),
+        )
+        conn.execute(
+            "DELETE FROM user_profile WHERE user_id = ?",
+            (user_id,),
+        )
+        conn.execute(
+            "UPDATE summaries SET stale = 1 WHERE user_id = ?",
+            (user_id,),
+        )
+
+        facts_written = 0
+        for f in payload.get("facts", []):
+            await _write_fact(conn, user_id, f, embed_func, now)
+            facts_written += 1
+
+        profile_written = 0
+        for p in payload.get("profile", []):
+            section = str(p.get("section", ""))
+            key = str(p.get("key", ""))
+            value = str(p.get("value", ""))
+            if not section or not key:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO user_profile(user_id, section, key, "
+                "value, source, confidence, privacy, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    user_id, section, key, value,
+                    str(p.get("source", "user_explicit")),
+                    float(p.get("confidence", 0.5)),
+                    str(p.get("privacy", "private")),
+                    int(p.get("updated_at", now)),
+                ),
+            )
+            profile_written += 1
+
+    return {"facts_written": facts_written, "profile_written": profile_written}
+
+
+async def _write_fact(
+    conn: sqlite3.Connection,
+    user_id: str,
+    f: dict,
+    embed_func: Callable[[str], bytes],
+    now: int,
+) -> str:
+    """Insert one snapshot fact as a fresh row mirroring the library writer.
+
+    This mirrors the shape of ``worker._persist_fact`` (user_explicit source,
+    active status, regenerated id, re-embedded vector) so imported facts are
+    first-class entries.
+    """
+    fact_id = str(uuid.uuid4())
+    subject = str(f.get("subject", ""))
+    predicate = str(f.get("predicate", ""))
+    obj = str(f.get("object", ""))
+    content = f.get("content") or None
+    searchable = (f"{subject} {predicate} {obj} " + (content or "")).strip()
+    # Embedding is CPU-bound model inference; run it in a worker thread.
+    embed_text = searchable or obj
+    blob = await asyncio.to_thread(embed_func, embed_text)
+
+    session_id = str(f.get("session_id", "restore"))
+    ftype = str(f.get("type", "semantic") or "semantic")
+    observed_at = int(f.get("observed_at", now))
+    created_at = int(f.get("created_at", now))
+
+    conn.execute(
+        "INSERT INTO facts(fact_id, user_id, session_id, subject, predicate, "
+        "object, qualifiers, confidence, importance, privacy, source_type, "
+        "status, superseded_by, observed_at, created_at, trace_id, version, "
+        "type, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+        "?, ?, ?, ?)",
+        (
+            fact_id, user_id, session_id, subject, predicate, obj,
+            f.get("qualifiers"),
+            float(f.get("confidence", 0.5)),
+            float(f.get("importance", 0.5)),
+            str(f.get("privacy", "private")),
+            "user_explicit",
+            "active",
+            None,
+            observed_at,
+            created_at,
+            None,
+            1,
+            ftype,
+            content,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO facts_fts(fact_id, text) VALUES (?, ?)",
+        (fact_id, " ".join(segment_text(searchable))),
+    )
+    conn.execute(
+        "INSERT INTO facts_vec(fact_id, embedding) VALUES (?, ?)",
+        (fact_id, blob),
+    )
+    return fact_id

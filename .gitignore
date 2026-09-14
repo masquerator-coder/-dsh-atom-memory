@@ -21,3 +21,6 @@ Thumbs.db
 # Tests / local
 coverage.xml
 htmlcov/
+
+# Generated architecture-diagram artifacts (archify skill output)
+archify/

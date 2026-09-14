@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+- **记忆设置界面（dsh Web 设置页新增「记忆」分区/面板）**：新增浏览器 client-plugin（`src/client/`，`package.json` 声明 `dsh.client` 与 `exports["./client"]`），在 dsh 设置侧边栏贡献独立「记忆」分区，面板含五大功能：
+  1. **记忆开关**：`enabled` 主开关 → 写入 `atom-memory` 设置命名空间，host 侧经 `installSection`+`setSource`+`onChange` 运行时热切换（关：停捕获/停上下文注入/工具拒绝；开：即时恢复，无需重启）。
+  2. **LLM 抽取模型**：可选「跟随 dsh 默认模型 / 手动指定 provider+model」，写入 `extractionModel` 覆盖；`llm-extractor.ts` 解析覆盖（provider 非空则优先生效，否则回退 dsh 默认选择）。
+  3. **user 画像编辑**：`list_profile` / `upsert_profile` / `delete_profile`（Python 新增），写回以最高优先级 `user_explicit` 标记，不被降级。
+  4. **记忆与编辑**：`list_facts` / `edit_fact`（Python 新增，含 FTS/向量重同步 + 摘要标脏），原子事实列表可增删改、摘要查看。
+  5. **记忆备份与恢复**：`backup`（导出 JSON）/ `restore`（导入 JSON，replace 语义：软删旧 + 重写快照）。
+- **Python RPC 扩展**（`rpc.py`/`api.py`/`backup.py`）：新增 `list_facts` / `edit_fact` / `list_profile` / `upsert_profile` / `delete_profile` / `backup` / `restore`；`tests/test_ui_api.py`（6 例）。
+- **host 远程控制器**（`src/controller.ts`，`TypertRemoteService`，Remote 命名空间 `atom-memory`）：把上述 Python 数据操作桥接到浏览器；`tests/runtime.ts`（5 例）与 `llm-extractor.test.ts` 覆盖模型覆盖与开关门。
+- **运行时配置持有者**（`src/runtime.ts`）：可变的 live 配置（enabled / captureEnabled / llmExtractionEnabled / contextInjectionEnabled / extractionModel），各处调用点按需读取并订阅变更。
+- `config.ts` 新增 `enabled` 与 `extractionModel` 字段；`cordis.patch.yml` 不再需要改动即自动带出（字段 optional）。
+
 ### Changed
 - **精简冻结快照的注入文案**：`context.ts` 的 `SNAPSHOT_HEADER` 由「标题 + 4 句」缩为
   「标题 + 一句数据防护」。删掉的 3 句（`Atomic facts that were in long-term memory…`、

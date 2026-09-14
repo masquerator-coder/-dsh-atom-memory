@@ -1,0 +1,229 @@
+/**
+ * Controller bridging the `atom-memory` settings namespace and the Host Remote
+ * operations onto a reactive snapshot for the settings panel.
+ *
+ * Features 1 (master switch) & 2 (extraction model) ride the settings document;
+ * features 3-5 (profile, facts editing, backup/restore) ride the Remote gateway
+ * (`ctx.remote.atomMemory`). The controller owns no model-visible state — it
+ * only stages the panel's drafts and forwards writes.
+ *
+ * @module dsh-atom-memory/client/memory-settings-controller
+ */
+
+import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+
+/** The live settings section this panel edits (mirrors the Host side). */
+export interface MemorySettingsSection {
+  enabled: boolean
+  captureEnabled: boolean
+  llmExtractionEnabled: boolean
+  contextInjectionEnabled: boolean
+  extractionModel?: { provider?: string; model?: string }
+}
+
+/** The dynamic facts/profile/backup data the panel fetches via Remote. */
+export interface MemoryData {
+  facts: Array<{
+    fact_id: string
+    subject: string
+    predicate: string
+    object: string
+    type?: string
+    content?: string
+  }>
+  profile: Array<{ section: string; key: string; value: string }>
+}
+
+/** What the panel renders. */
+export interface MemorySettingsState {
+  /** Whether the settings namespace is served and writable. */
+  available: boolean
+  loading: boolean
+  section: MemorySettingsSection
+  /** Dynamic data (facts + profile), fetched lazily. */
+  data: MemoryData
+  lastError?: string
+}
+
+/** The registration-side face the section's slot entry injects.
+ *
+ * Per `InjectFace`, the `hooks` compartment arrives as `use<Name>` hooks and
+ * every other member passes through verbatim as props, so the actions live at
+ * the top level (not nested under `actions`).
+ */
+export interface MemorySettingsFace {
+  hooks: {
+    /** Section snapshot bound by the renderer as useMemorySettings. */
+    memorySettings: SnapshotStore<MemorySettingsState>
+  }
+  setEnabled: (enabled: boolean) => Promise<void>
+  setExtractionModel: (provider: string, model: string) => Promise<void>
+  refreshData: () => Promise<void>
+  saveFact: (fact: MemoryData['facts'][number]) => Promise<void>
+  upsertProfile: (section: string, key: string, value: string) => Promise<void>
+  deleteProfile: (section: string, key: string) => Promise<void>
+  backup: () => Promise<Record<string, unknown>>
+  restore: (payload: Record<string, unknown>) => Promise<{ facts_written: number; profile_written: number }>
+}
+
+/** Minimal structural shape of the `atom-memory` Remote namespace. */
+interface RemoteAtomMemory {
+  listFacts(args: { user: string; offset?: number; limit?: number }): Promise<{ facts: MemoryData['facts']; total: number }>
+  editFact(args: {
+    user: string
+    fact_id: string
+    subject?: string
+    predicate?: string
+    object?: string
+    content?: string
+    type?: string
+  }): Promise<unknown>
+  listProfile(args: { user: string }): Promise<{ profile: MemoryData['profile'] }>
+  upsertProfile(args: { user: string; section: string; key: string; value: string }): Promise<unknown>
+  deleteProfile(args: { user: string; section: string; key: string }): Promise<unknown>
+  backup(args: { user: string }): Promise<Record<string, unknown>>
+  restore(args: { user: string; payload: Record<string, unknown> }): Promise<{ facts_written: number; profile_written: number }>
+}
+
+const USER = 'global'
+
+export class MemorySettingsController {
+  private readonly store = createSnapshotStore<MemorySettingsState>({
+    available: false,
+    loading: true,
+    section: {
+      enabled: true,
+      captureEnabled: true,
+      llmExtractionEnabled: true,
+      contextInjectionEnabled: true,
+      extractionModel: undefined,
+    },
+    data: { facts: [], profile: [] },
+  })
+  private readonly unsubscribe: () => void
+
+  constructor(
+    private readonly scope: SettingsScope<MemorySettingsSection>,
+    private readonly remote: unknown,
+  ) {
+    this.unsubscribe = scope.subscribe(() => this.publish())
+    this.publish()
+  }
+
+  /** @returns the face the section's slot registration injects. */
+  inject(): MemorySettingsFace {
+    return {
+      hooks: { memorySettings: this.store },
+      setEnabled: (enabled) => this.scope.set('enabled', enabled),
+      setExtractionModel: (provider, model) =>
+        this.scope.set('extractionModel', { provider, model }),
+      refreshData: () => this.refreshData(),
+      saveFact: (fact) => this.saveFact(fact),
+      upsertProfile: (section, key, value) => this.upsertProfile(section, key, value),
+      deleteProfile: (section, key) => this.deleteProfile(section, key),
+      backup: () => this.backup(),
+      restore: (payload) => this.restore(payload),
+    }
+  }
+
+  dispose(): void {
+    this.unsubscribe()
+  }
+
+  private r(): RemoteAtomMemory {
+    return this.remote as RemoteAtomMemory
+  }
+
+  private publish(): void {
+    const snap = this.scope.getSnapshot()
+    const value = snap.value
+    this.store.set({
+      available: snap.status === 'ready' || snap.status === 'loading',
+      loading: snap.status === 'loading',
+      section: value === undefined ? this.store.getSnapshot().section : defaulted(value),
+      data: this.store.getSnapshot().data,
+      lastError: this.store.getSnapshot().lastError,
+    })
+  }
+
+  private async refreshData(): Promise<void> {
+    try {
+      const [facts, profile] = await Promise.all([
+        this.r().listFacts({ user: USER, limit: 200 }),
+        this.r().listProfile({ user: USER }),
+      ])
+      this.store.set({
+        ...this.store.getSnapshot(),
+        data: { facts: facts.facts, profile: profile.profile },
+        lastError: undefined,
+      })
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+    }
+  }
+
+  private async saveFact(fact: MemoryData['facts'][number]): Promise<void> {
+    try {
+      await this.r().editFact({
+        user: USER,
+        fact_id: fact.fact_id,
+        subject: fact.subject,
+        predicate: fact.predicate,
+        object: fact.object,
+        content: fact.content,
+        type: fact.type,
+      })
+      await this.refreshData()
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+    }
+  }
+
+  private async upsertProfile(section: string, key: string, value: string): Promise<void> {
+    try {
+      await this.r().upsertProfile({ user: USER, section, key, value })
+      await this.refreshData()
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+    }
+  }
+
+  private async deleteProfile(section: string, key: string): Promise<void> {
+    try {
+      await this.r().deleteProfile({ user: USER, section, key })
+      await this.refreshData()
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+    }
+  }
+
+  private async backup(): Promise<Record<string, unknown>> {
+    return this.r().backup({ user: USER })
+  }
+
+  private async restore(payload: Record<string, unknown>): Promise<{ facts_written: number; profile_written: number }> {
+    const result = await this.r().restore({ user: USER, payload })
+    await this.refreshData()
+    return result
+  }
+}
+
+/** Fill defaults onto a (possibly partial / identical) section value. */
+function defaulted(value: MemorySettingsSection): MemorySettingsSection {
+  return {
+    enabled: value.enabled ?? true,
+    captureEnabled: value.captureEnabled ?? true,
+    llmExtractionEnabled: value.llmExtractionEnabled ?? true,
+    contextInjectionEnabled: value.contextInjectionEnabled ?? true,
+    extractionModel: value.extractionModel,
+  }
+}

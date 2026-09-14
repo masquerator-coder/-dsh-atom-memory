@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
+import "@deepseek-ai/cordis";
+import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 //#region src/config.ts
 /**
 * Plugin configuration (schemastery). See the repo design doc for the
@@ -15,6 +17,14 @@ const Config = z.object({
 	dbPath: z.string().default("~/.dsh/atom-memory/memory.db"),
 	pythonBin: z.string().default(""),
 	autostart: z.boolean().default(true),
+	enabled: z.boolean().default(true),
+	extractionModel: z.object({
+		provider: z.string().default(""),
+		model: z.string().default("")
+	}).default({
+		provider: "",
+		model: ""
+	}),
 	captureEnabled: z.boolean().default(true),
 	llmExtractionEnabled: z.boolean().default(true),
 	extractionMaxTokens: z.number().default(2048),
@@ -301,6 +311,10 @@ function sessionIdOf(exec, fallback) {
 	const sessionId = exec.agent?.session?.id;
 	return sessionId !== void 0 ? sessionId : fallback;
 }
+/** Thrown when the memory master switch is off. */
+function disabledError() {
+	return /* @__PURE__ */ new Error("memory is disabled");
+}
 /** Register all memory tools and return their disposers. */
 function registerMemoryTools(deps) {
 	const { ctx, bridge } = deps;
@@ -335,6 +349,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
+			if (deps.isEnabled?.() === false) throw disabledError();
 			const uid = args.user ?? userIdOf(exec, scope);
 			const sid = sessionIdOf(exec, scope);
 			const raw = args.content;
@@ -415,6 +430,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
+			if (deps.isEnabled?.() === false) throw disabledError();
 			const uid = args.user ?? userIdOf(exec, scope);
 			const r = await call("recall", {
 				user_id: uid,
@@ -449,6 +465,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
+			if (deps.isEnabled?.() === false) throw disabledError();
 			const uid = args.user ?? userIdOf(exec, scope);
 			return { text: await call("summary", { user_id: uid }) };
 		}
@@ -479,6 +496,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
+			if (deps.isEnabled?.() === false) throw disabledError();
 			if (!args.factId) throw new Error("memory_forget requires factId");
 			return await call("forget", {
 				user_id: args.user ?? userIdOf(exec, scope),
@@ -506,6 +524,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
+			if (deps.isEnabled?.() === false) throw disabledError();
 			const uid = args.user ?? userIdOf(exec, scope);
 			return { text: await call("memory_md", {
 				user_id: uid,
@@ -533,6 +552,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
+			if (deps.isEnabled?.() === false) throw disabledError();
 			const uid = args.user ?? userIdOf(exec, scope);
 			return { text: await call("user_md", { user_id: uid }) };
 		}
@@ -557,6 +577,7 @@ function registerMemoryTools(deps) {
 			}
 		},
 		async execute(args, exec) {
+			if (deps.isEnabled?.() === false) throw disabledError();
 			return await call("stats", { user_id: args.user ?? userIdOf(exec, scope) });
 		}
 	})));
@@ -646,6 +667,7 @@ function registerMemoryContext(deps) {
 	};
 	ctx.on("system-prompt/assemble", async (_assembly, context, next) => {
 		const assembly = await next();
+		if (deps.isEnabled?.() === false) return assembly;
 		const sessionId = context.agent?.session?.id;
 		if (sessionId === void 0) return assembly;
 		const text = await snapshotFor(sessionId);
@@ -810,23 +832,34 @@ function isEphemeral(c) {
 }
 /**
 * Build the LLM-first extraction function bound to the dsh `llm` service and
-* the current default model.
+* the configured model.
 *
-* @returns ``undefined`` when no `llm` service or no default model is
+* Model resolution: a manual ``extractionModel`` override wins when it names a
+* provider, otherwise the dsh current-preset default selection is used. When
+* neither yields a usable provider/model, ``undefined`` is returned and the
+* caller falls back to the Python rule engine (never a silent drop).
+*
+* @returns ``undefined`` when no `llm` service and no usable model is
 *   available, so callers can disable the LLM path cleanly.
 */
 function buildLlmExtractor(ctx, opts = {}) {
 	const llm = ctx.get("llm");
+	if (llm === void 0) return void 0;
 	const def = ctx.get("agentDefaultModel");
-	if (llm === void 0 || def === void 0) return void 0;
-	let selection;
-	try {
-		selection = def.currentSelection();
-	} catch {
-		selection = void 0;
-	}
-	if (selection === void 0 || !selection.provider || !selection.model) return;
+	const modelOverride = opts.modelOverride?.();
+	let provider = modelOverride?.provider?.trim() ?? "";
+	let model = modelOverride?.model?.trim() ?? "";
+	if (!provider && def !== void 0) try {
+		const selection = def.currentSelection();
+		if (selection !== void 0) {
+			provider = selection.provider;
+			model = selection.model;
+		}
+	} catch {}
+	if (!provider || !model) return void 0;
+	const enabled = opts.enabled;
 	return async (text) => {
+		if (enabled?.() === false) return [];
 		const messages = [createUserMessage({
 			content: [{
 				type: "text",
@@ -838,8 +871,8 @@ function buildLlmExtractor(ctx, opts = {}) {
 			}
 		})];
 		const options = {
-			provider: selection.provider,
-			model: selection.model,
+			provider,
+			model,
 			messages,
 			system: EXTRACTION_SYSTEM,
 			maxTokens: opts.maxTokens ?? 2048,
@@ -891,13 +924,143 @@ function parseCandidates(raw) {
 	return out;
 }
 //#endregion
+//#region src/runtime.ts
+/** Resolve a seed into a complete runtime value (defaults applied). */
+function createRuntime(seed) {
+	return {
+		enabled: seed.enabled ?? true,
+		captureEnabled: seed.captureEnabled ?? true,
+		llmExtractionEnabled: seed.llmExtractionEnabled ?? true,
+		contextInjectionEnabled: seed.contextInjectionEnabled ?? true,
+		extractionModel: seed.extractionModel
+	};
+}
+/** Mutable holder with a subscribe API for the settings `onChange` wiring. */
+var Runtime = class {
+	value;
+	listeners = /* @__PURE__ */ new Set();
+	constructor(seed) {
+		this.value = { ...seed };
+	}
+	/** Snapshot of the current live values. */
+	get() {
+		return { ...this.value };
+	}
+	/** Whether the plugin master switch is on. */
+	isEnabled() {
+		return this.value.enabled;
+	}
+	/** Replace the whole live runtime (from a settings write). */
+	set(next) {
+		const changed = this.value.enabled !== next.enabled || this.value.captureEnabled !== next.captureEnabled || this.value.llmExtractionEnabled !== next.llmExtractionEnabled || this.value.contextInjectionEnabled !== next.contextInjectionEnabled;
+		this.value = { ...next };
+		if (changed) for (const listener of this.listeners) listener();
+	}
+	/** Subscribe to runtime changes (returns the disposer). */
+	subscribe(listener) {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+};
+/** Namespace id used for the plugin's settings section on the Host. */
+const SETTINGS_NAMESPACE = "atom-memory";
+//#endregion
+//#region src/controller.ts
+/**
+* Host service backing `ctx.remote.atomMemory`. Every method delegates to the
+* Python bridge and returns a JSON-serializable business value (backup payloads
+* are plain JSON). Arguments are validated minimally here and fully by the
+* Python side.
+*/
+var AtomMemoryController = class extends TypertRemoteService {
+	bridge;
+	runtime;
+	constructor(ctx, bridge, runtime) {
+		super(ctx, "atomMemoryController", { namespace: "atom-memory" });
+		this.bridge = bridge;
+		this.runtime = runtime;
+	}
+	/** Whether the bridge is alive and the plugin master switch is on. */
+	assertReady() {
+		if (!this.runtime.isEnabled()) throw new Error("memory is disabled");
+		if (!this.bridge.alive) throw new Error("memory bridge is not running");
+	}
+	/** Paginate the user's active facts. */
+	@Remote async listFacts(args) {
+		this.assertReady();
+		return this.bridge.call("list_facts", {
+			user_id: args.user,
+			offset: args.offset ?? 0,
+			limit: args.limit ?? 50,
+			include_retracted: args.includeRetracted ?? false
+		});
+	}
+	/** Directly edit one active fact's SPO / type / content. */
+	@Remote async editFact(args) {
+		this.assertReady();
+		if (!args.fact_id) throw new Error("editFact requires fact_id");
+		return this.bridge.call("edit_fact", {
+			user_id: args.user,
+			fact_id: args.fact_id,
+			subject: args.subject,
+			predicate: args.predicate,
+			object: args.object,
+			content: args.content,
+			type: args.type
+		});
+	}
+	/** List the user's profile rows. */
+	@Remote async listProfile(args) {
+		this.assertReady();
+		return this.bridge.call("list_profile", { user_id: args.user });
+	}
+	/** Add or update one profile row. */
+	@Remote async upsertProfile(args) {
+		this.assertReady();
+		if (!args.section || !args.key) throw new Error("upsertProfile requires section and key");
+		return this.bridge.call("upsert_profile", {
+			user_id: args.user,
+			section: args.section,
+			key: args.key,
+			value: args.value
+		});
+	}
+	/** Delete one profile row. */
+	@Remote async deleteProfile(args) {
+		this.assertReady();
+		return this.bridge.call("delete_profile", {
+			user_id: args.user,
+			section: args.section,
+			key: args.key
+		});
+	}
+	/** Export the user's memory as a JSON snapshot (for download). */
+	@Remote async backup(args) {
+		this.assertReady();
+		return this.bridge.call("backup", { user_id: args.user });
+	}
+	/** Import a JSON snapshot, replacing the user's memory. */
+	@Remote async restore(args) {
+		this.assertReady();
+		if (!args.payload || typeof args.payload !== "object") throw new Error("restore requires a backup payload");
+		return this.bridge.call("restore", {
+			user_id: args.user,
+			payload: args.payload
+		});
+	}
+	/** Read the current live runtime (enabled / capture / model override). */
+	@Remote async getRuntime() {
+		return this.runtime.get();
+	}
+};
+//#endregion
 //#region src/index.ts
 const name = "dsh-atom-memory";
 /**
 * Required services. `tools` and `systemPrompt` are the only hard
-* dependencies — matching the reference dsh-memory plugin. `llm` and
-* `agentDefaultModel` are read via `ctx.get`, never injected (they are
-* optional, model-versioned services).
+* dependencies — matching the reference dsh-memory plugin. `llm`,
+* `agentDefaultModel` and `settings` are read via `ctx.get`, never injected
+* (they are optional, model-versioned, or deployment-determined services).
 */
 const inject = ["tools", "systemPrompt"];
 /** Fallback user/session scope for a single-user local harness. */
@@ -911,7 +1074,21 @@ function buildStartParams(config) {
 		max_retries: 3
 	};
 }
+/**
+* Seed the live runtime from the composition config, applying defaults.
+* @param config - the validated composition entry.
+*/
+function seedRuntime(config) {
+	return createRuntime({
+		enabled: config.enabled !== false,
+		captureEnabled: config.captureEnabled !== false,
+		llmExtractionEnabled: config.llmExtractionEnabled !== false,
+		contextInjectionEnabled: config.contextInjectionEnabled !== false,
+		extractionModel: config.extractionModel
+	});
+}
 function apply(ctx, config) {
+	const runtime = new Runtime(seedRuntime(config));
 	const bridge = new PythonBridge({
 		spawnProcess: () => defaultSpawn(config.pythonBin),
 		timeoutMs: config.rpcTimeoutMs,
@@ -945,8 +1122,18 @@ function apply(ctx, config) {
 		});
 	};
 	if (config.autostart !== false) tryStart();
-	const extract = config.llmExtractionEnabled === false ? void 0 : buildLlmExtractor(ctx, { maxTokens: config.extractionMaxTokens ?? 2048 });
+	const extract = runtime.get().llmExtractionEnabled === false ? void 0 : buildLlmExtractor(ctx, {
+		maxTokens: config.extractionMaxTokens ?? 2048,
+		modelOverride: () => runtime.get().extractionModel,
+		enabled: () => runtime.isEnabled()
+	});
+	try {
+		new AtomMemoryController(ctx, bridge, runtime);
+	} catch (err) {
+		ctx.logger(`[atom-memory] remote controller unavailable (${err?.message ?? err})`);
+	}
 	const capture = async (text, sessionId) => {
+		if (!runtime.isEnabled()) return;
 		if (started.value && extract !== void 0) try {
 			const candidates = await extract(text);
 			if (candidates.length > 0) {
@@ -972,7 +1159,8 @@ function apply(ctx, config) {
 		fallbackScope: FALLBACK_SCOPE,
 		maxRecalledFacts: config.maxRecalledFacts ?? 10,
 		memoryMdTokens: config.memoryMdTokens ?? 1500,
-		extract
+		extract,
+		isEnabled: () => runtime.isEnabled()
 	});
 	for (const d of disposers) ctx.effect(() => d);
 	registerCapture({
@@ -980,7 +1168,7 @@ function apply(ctx, config) {
 		capture,
 		maxRecent: 20
 	}, {
-		captureEnabled: config.captureEnabled !== false,
+		captureEnabled: runtime.get().captureEnabled,
 		preCompressionCapture: config.preCompressionCapture !== false,
 		nudgeEnabled: config.nudgeEnabled !== false,
 		nudgeIntervalMs: (config.nudgeIntervalMinutes ?? 30) * 6e4
@@ -990,9 +1178,40 @@ function apply(ctx, config) {
 		bridge,
 		userScope: FALLBACK_SCOPE,
 		maxTokens: config.memoryMdTokens ?? 1500,
-		snapshotEnabled: config.contextInjectionEnabled !== false
+		snapshotEnabled: runtime.get().contextInjectionEnabled,
+		isEnabled: () => runtime.isEnabled()
 	});
+	const settings = ctx.get("settings");
+	if (settings?.installSection !== void 0) {
+		let source = () => seedRuntime(config);
+		settings.installSection(ctx, SETTINGS_NAMESPACE, LiveSettingsSchema, source(), {
+			setSource: (current) => {
+				source = current;
+			},
+			onChange: () => {
+				runtime.set(source());
+			}
+		});
+		ctx.logger(`[dsh-atom-memory] settings section "${SETTINGS_NAMESPACE}" registered`);
+	}
 	ctx.logger("[dsh-atom-memory] loaded");
 }
+/**
+* Schemastery schema for the live settings namespace. This mirrors only the
+* runtime-toggleable fields so a settings write maps 1:1 onto the Runtime.
+*/
+const LiveSettingsSchema = z.object({
+	enabled: z.boolean().default(true),
+	captureEnabled: z.boolean().default(true),
+	llmExtractionEnabled: z.boolean().default(true),
+	contextInjectionEnabled: z.boolean().default(true),
+	extractionModel: z.object({
+		provider: z.string().default(""),
+		model: z.string().default("")
+	}).default({
+		provider: "",
+		model: ""
+	})
+});
 //#endregion
 export { Config, apply, inject, name };

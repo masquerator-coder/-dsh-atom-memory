@@ -67,6 +67,8 @@ export interface MemoryContextDeps {
   maxTokens: number
   /** Master switch for snapshot injection (awareness is always registered). */
   snapshotEnabled: boolean
+  /** Master-switch gate: when it returns false the snapshot is not injected. */
+  isEnabled?: () => boolean
   /** Max sessions whose frozen snapshot is retained (oldest evicted first). */
   maxFrozenSessions?: number
 }
@@ -139,6 +141,8 @@ export function registerMemoryContext(deps: MemoryContextDeps): void {
     next: () => Promise<PromptAssembly>,
   ): Promise<PromptAssembly> => {
     const assembly = await next()
+    // Master switch off: do not surface memory to the model at all.
+    if (deps.isEnabled?.() === false) return assembly
     const agent = context.agent as { session?: { id?: string } } | undefined
     const sessionId = agent?.session?.id
     if (sessionId === undefined) return assembly

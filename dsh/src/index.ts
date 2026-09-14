@@ -18,19 +18,24 @@
  * @module dsh-atom-memory/index
  */
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import { Config, type Config as ConfigShape } from './config.ts'
 import { PythonBridge, defaultSpawn } from './bridge.ts'
 import { registerMemoryTools } from './tools.ts'
 import { registerMemoryContext } from './context.ts'
 import { registerCapture } from './capture.ts'
 import { buildLlmExtractor, type ExtractFn } from './llm-extractor.ts'
+import {
+  createRuntime, SETTINGS_NAMESPACE, type LiveRuntime, Runtime,
+} from './runtime.ts'
+import { AtomMemoryController } from './controller.ts'
 
 export const name = 'dsh-atom-memory'
 /**
  * Required services. `tools` and `systemPrompt` are the only hard
- * dependencies — matching the reference dsh-memory plugin. `llm` and
- * `agentDefaultModel` are read via `ctx.get`, never injected (they are
- * optional, model-versioned services).
+ * dependencies — matching the reference dsh-memory plugin. `llm`,
+ * `agentDefaultModel` and `settings` are read via `ctx.get`, never injected
+ * (they are optional, model-versioned, or deployment-determined services).
  */
 export const inject = ['tools', 'systemPrompt'] as const
 
@@ -49,7 +54,23 @@ function buildStartParams(config: ConfigShape): Record<string, unknown> {
   }
 }
 
+/**
+ * Seed the live runtime from the composition config, applying defaults.
+ * @param config - the validated composition entry.
+ */
+function seedRuntime(config: ConfigShape): LiveRuntime {
+  return createRuntime({
+    enabled: config.enabled !== false,
+    captureEnabled: config.captureEnabled !== false,
+    llmExtractionEnabled: config.llmExtractionEnabled !== false,
+    contextInjectionEnabled: config.contextInjectionEnabled !== false,
+    extractionModel: config.extractionModel,
+  })
+}
+
 export function apply(ctx: Context, config: ConfigShape): void {
+  const runtime = new Runtime(seedRuntime(config))
+
   const bridge = new PythonBridge({
     spawnProcess: () => defaultSpawn(config.pythonBin),
     timeoutMs: config.rpcTimeoutMs,
@@ -87,18 +108,32 @@ export function apply(ctx: Context, config: ConfigShape): void {
   }
   if (config.autostart !== false) tryStart()
 
-  // LLM-first extraction (optional): reads the dsh default model. The output
-  // budget must fit the whole JSON payload including knowledge bodies; the old
-  // hard-coded 600 truncated long knowledge, and a truncated extraction is
-  // discarded rather than persisted.
+  // LLM-first extraction (optional): prefers a manual extractionModel override,
+  // else follows the dsh default model. `enabled` gates the extractor so the
+  // master switch silences the LLM path without re-registering anything.
   const extract: ExtractFn | undefined =
-    config.llmExtractionEnabled === false
+    runtime.get().llmExtractionEnabled === false
       ? undefined
-      : buildLlmExtractor(ctx, { maxTokens: config.extractionMaxTokens ?? 2048 })
+      : buildLlmExtractor(ctx, {
+          maxTokens: config.extractionMaxTokens ?? 2048,
+          modelOverride: () => runtime.get().extractionModel,
+          enabled: () => runtime.isEnabled(),
+        })
+
+  // The panel's data operations (features 3-5) are served to the browser over
+  // the Remote gateway; registration is reversible with the controller. The
+  // gateway protocol is optional — if this deployment lacks it, features 3-5
+  // are simply unavailable in the browser and the plugin degrades gracefully.
+  try {
+    new AtomMemoryController(ctx, bridge, runtime)
+  } catch (err) {
+    ctx.logger(`[atom-memory] remote controller unavailable (${(err as Error)?.message ?? err})`)
+  }
 
   // Single ingestion point: LLM-first candidates -> persist_candidates, else
   // -> rule-based add (everything stays isolated in the Python process).
   const capture = async (text: string, sessionId: string): Promise<void> => {
+    if (!runtime.isEnabled()) return
     if (started.value && extract !== undefined) {
       try {
         const candidates = await extract(text)
@@ -135,6 +170,7 @@ export function apply(ctx: Context, config: ConfigShape): void {
     maxRecalledFacts: config.maxRecalledFacts ?? 10,
     memoryMdTokens: config.memoryMdTokens ?? 1500,
     extract,
+    isEnabled: () => runtime.isEnabled(),
   })
   for (const d of disposers) ctx.effect(() => d)
 
@@ -142,7 +178,7 @@ export function apply(ctx: Context, config: ConfigShape): void {
   registerCapture(
     { ctx, capture, maxRecent: 20 },
     {
-      captureEnabled: config.captureEnabled !== false,
+      captureEnabled: runtime.get().captureEnabled,
       preCompressionCapture: config.preCompressionCapture !== false,
       nudgeEnabled: config.nudgeEnabled !== false,
       nudgeIntervalMs: (config.nudgeIntervalMinutes ?? 30) * 60_000,
@@ -150,15 +186,59 @@ export function apply(ctx: Context, config: ConfigShape): void {
   ).forEach((d) => ctx.effect(() => d))
 
   // System-prompt awareness + the session-start-frozen memory snapshot.
+  // `isEnabled` gates snapshot injection; the awareness section is registered
+  // always (it is a static capability description) but injection stops when
+  // the master switch is off.
   registerMemoryContext({
     ctx,
     bridge,
     userScope: FALLBACK_SCOPE,
     maxTokens: config.memoryMdTokens ?? 1500,
-    snapshotEnabled: config.contextInjectionEnabled !== false,
+    snapshotEnabled: runtime.get().contextInjectionEnabled,
+    isEnabled: () => runtime.isEnabled(),
   })
+
+  // Settings namespace: the composition entry seeds the runtime; a settings
+  // write replaces it live. This powers the memory master switch (feature 1)
+  // and the LLM extraction model override (feature 2) without a restart.
+  const settings = ctx.get('settings') as {
+    installSection?(
+      owner: Context,
+      ns: string,
+      schema: unknown,
+      entry: LiveRuntime,
+      hooks: {
+        setSource(current: () => LiveRuntime): void
+        onChange(): void
+        validate?(value: LiveRuntime): void
+      },
+    ): void
+  } | undefined
+  if (settings?.installSection !== undefined) {
+    let source: () => LiveRuntime = () => seedRuntime(config)
+    settings.installSection(ctx, SETTINGS_NAMESPACE, LiveSettingsSchema, source(), {
+      setSource: (current) => { source = current },
+      onChange: () => { runtime.set(source()) },
+    })
+    ctx.logger(`[dsh-atom-memory] settings section "${SETTINGS_NAMESPACE}" registered`)
+  }
 
   ctx.logger('[dsh-atom-memory] loaded')
 }
+
+/**
+ * Schemastery schema for the live settings namespace. This mirrors only the
+ * runtime-toggleable fields so a settings write maps 1:1 onto the Runtime.
+ */
+const LiveSettingsSchema: z<LiveRuntime> = z.object({
+  enabled: z.boolean().default(true),
+  captureEnabled: z.boolean().default(true),
+  llmExtractionEnabled: z.boolean().default(true),
+  contextInjectionEnabled: z.boolean().default(true),
+  extractionModel: z.object({
+    provider: z.string().default(''),
+    model: z.string().default(''),
+  }).default({ provider: '', model: '' }),
+})
 
 

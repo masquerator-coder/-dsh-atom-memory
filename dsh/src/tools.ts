@@ -101,6 +101,13 @@ export interface ToolDeps {
    * Absent means the rule engine is the only extractor (original behaviour).
    */
   extract?: ExtractFn
+  /** Master-switch gate: when it returns false every tool rejects with a clear error. */
+  isEnabled?: () => boolean
+}
+
+/** Thrown when the memory master switch is off. */
+function disabledError(): Error {
+  return new Error('memory is disabled')
 }
 
 /** Register all memory tools and return their disposers. */
@@ -126,6 +133,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
+      if (deps.isEnabled?.() === false) throw disabledError()
       const uid = args.user ?? userIdOf(exec, scope)
       const sid = sessionIdOf(exec, scope)
       const raw = args.content
@@ -212,6 +220,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
+      if (deps.isEnabled?.() === false) throw disabledError()
       const uid = args.user ?? userIdOf(exec, scope)
       const r = await call<any>('recall', {
         user_id: uid,
@@ -244,6 +253,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
+      if (deps.isEnabled?.() === false) throw disabledError()
       const uid = args.user ?? userIdOf(exec, scope)
       const text = await call<string>('summary', { user_id: uid })
       return { text }
@@ -262,6 +272,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       render() { return [{ type: 'text', text: '已处理该记忆' }] },
     },
     async execute(args, exec) {
+      if (deps.isEnabled?.() === false) throw disabledError()
       if (!args.factId) throw new Error('memory_forget requires factId')
       return await call('forget', { user_id: args.user ?? userIdOf(exec, scope), fact_id: args.factId })
     },
@@ -281,6 +292,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
+      if (deps.isEnabled?.() === false) throw disabledError()
       const uid = args.user ?? userIdOf(exec, scope)
       const text = await call<string>('memory_md', { user_id: uid, max_tokens: deps.memoryMdTokens })
       return { text }
@@ -301,6 +313,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       },
     },
     async execute(args, exec) {
+      if (deps.isEnabled?.() === false) throw disabledError()
       const uid = args.user ?? userIdOf(exec, scope)
       const text = await call<string>('user_md', { user_id: uid })
       return { text }
@@ -318,6 +331,7 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       render(_args, value) { return [{ type: 'text', text: JSON.stringify(value) }] },
     },
     async execute(args, exec) {
+      if (deps.isEnabled?.() === false) throw disabledError()
       return await call('stats', { user_id: args.user ?? userIdOf(exec, scope) })
     },
   })))

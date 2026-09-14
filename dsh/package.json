@@ -1,45 +1,88 @@
 {
   "name": "dsh-atom-memory",
   "version": "0.1.0",
-  "description": "dsh-side integration for the dsh-atom-memory Python library: subprocess+stdio bridge, memory tools, LLM-first extraction, and durable capture hooks.",
+  "description": "dsh-side integration for the dsh-atom-memory Python library: subprocess+stdio bridge, memory tools, LLM-first extraction, durable capture hooks, and a browser settings section (memory on/off, extraction model, profile + memory editing, backup/restore).",
   "type": "module",
   "main": "lib/index.mjs",
   "types": "lib/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.mts",
+      "default": "./lib/index.mjs"
+    },
+    "./client": {
+      "default": "./src/client/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "lib",
+    "src/client",
     "cordis.patch.yml"
   ],
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {},
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-agent": "0.1.3-alpha.2",
+    "@deepseek-ai/dsh-api-remotes": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-store": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.5-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.3-alpha.2",
     "@deepseek-ai/dsh-session": "0.1.3-alpha.2",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.1.3-alpha.2",
     "@deepseek-ai/dsh-tools": "0.1.3-alpha.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-util-values": "0.1.5-rc.2",
     "@deepseek-ai/schemastery": "^3.18.2",
     "@types/node": "^22.20.1",
+    "@types/react": "~18.3.1",
+    "clsx": "^2.0.0",
+    "react": "^18.2.0",
     "tsdown": "^0.22.14",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "zustand": "^4.5.2",
+    "immer": "^10.1.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-agent": ">=0.1.0-rc.8 <0.2.0",
     "@deepseek-ai/dsh-llm": ">=0.1.0-rc.8 <0.2.0",
     "@deepseek-ai/dsh-session": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.8 <0.2.0",
     "@deepseek-ai/dsh-system-prompt": ">=0.1.0-rc.8 <0.2.0",
     "@deepseek-ai/dsh-tools": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.8 <0.2.0",
     "@deepseek-ai/schemastery": "^3.18.2"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "external": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
     }
   },
   "engines": {

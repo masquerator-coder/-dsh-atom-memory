@@ -33,6 +33,8 @@ pnpm build       # -> lib/index.mjs
 | `dbPath` | `~/.dsh/atom-memory/memory.db` | Python 侧 SQLite 路径 |
 | `pythonBin` | `''`（用 PATH 上的 `python`） | 覆盖解释器（如 venv） |
 | `autostart` | `true` | 加载即启动桥接（部署期开关） |
+| `enabled` | `true` | 记忆总开关；关闭则停用捕获/上下文注入/记忆工具（运行时热切换） |
+| `extractionModel` | `{provider:'', model:''}` | LLM 抽取模型覆盖；provider 为空则跟随 dsh 默认模型；非空则手动指定 |
 | `captureEnabled` | `true` | per-message 捕获 |
 | `llmExtractionEnabled` | `true` | 启用以 dsh 默认模型作 LLM-first 抽取 |
 | `extractionMaxTokens` | `2048` | 单次抽取的输出 token 上限（需装下知识正文，过小会静默丢长知识） |
@@ -43,6 +45,30 @@ pnpm build       # -> lib/index.mjs
 | `memoryMdTokens` | `1500` | memory.md token 上限 |
 | `contextInjectionEnabled` | `true` | 会话起始冻结快照注入系统提示词 |
 | `rpcTimeoutMs` | `30000` | 单次 RPC 超时 |
+
+## 记忆设置界面（dsh Web）
+
+插件自带浏览器 client-plugin（`src/client/`），在 **dsh 设置**侧边栏贡献独立的
+**「记忆」** 分区。`enabled`/`llmExtractionEnabled`/`contextInjectionEnabled`/
+`captureEnabled`/`extractionModel` 通过 `installSection` 注册为 `atom-memory`
+设置命名空间，因此**在设置界面改即实时生效、无需重启**；其余字段仍走部署期
+`schemastery` 配置。
+
+面板五大功能：
+
+| 功能 | 说明 | 走线 |
+| --- | --- | --- |
+| 记忆开关 | `enabled` 主开关，实时热切换 | `settings<atom-memory>.enabled` → host `Runtime` |
+| LLM 抽取模型 | 跟随 dsh 默认 / 手动 provider+model | `settings<atom-memory>.extractionModel` → `llm-extractor` |
+| user 画像编辑 | 画像行增删改（`user_explicit` 最高优先级） | `remote.atomMemory.listProfile/upsertProfile/deleteProfile` |
+| 记忆与编辑 | 原子事实列表查看/编辑（SPO/content/type），摘要查看 | `remote.atomMemory.listFacts/editFact` |
+| 记忆备份与恢复 | 导出 JSON / 上传导入（replace 语义） | `remote.atomMemory.backup/restore` |
+
+> **浏览器端构建说明**：client-plugin 的浏览器 bundle 由 dsh 自身工具链
+> （`packages/client/tsdown.client.ts`，经 `window.__ModuleLoader__` 装配）生成，
+> 不在本仓库内打包。本仓库交付 `src/client` 源码头 + `package.json` 的
+> `dsh.client` 声明（`exports["./client"]`）。本地 `pnpm run typecheck` 会用
+> `tsconfig.client.json` 对客户端源码头做类型校验。
 
 ## 工具（模型可见面）
 

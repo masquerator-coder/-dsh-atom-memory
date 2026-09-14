@@ -109,4 +109,60 @@ describe('buildLlmExtractor', () => {
     await expect(buildLlmExtractor(ctx)!('x')).rejects.toThrow('stop-here')
     expect(captured[0]!.maxTokens).toBe(2048)
   })
+
+  it('prefers a manual model override over the dsh default selection', async () => {
+    const captured: Array<{ provider?: string; model?: string }> = []
+    const ctx = {
+      get: (key: string) => key === 'llm'
+        ? {
+            stream: async function* (opts: { provider?: string; model?: string }) {
+              captured.push(opts)
+              throw new Error('stop-here')
+            },
+          }
+        : { currentSelection: () => ({ provider: 'default-p', model: 'default-m' }) },
+      logger: () => {},
+    } as any
+
+    const extract = buildLlmExtractor(ctx, {
+      modelOverride: () => ({ provider: 'manual-p', model: 'manual-m' }),
+    })!
+    await expect(extract('x')).rejects.toThrow('stop-here')
+    expect(captured[0]).toMatchObject({ provider: 'manual-p', model: 'manual-m' })
+  })
+
+  it('falls back to the default selection when the override names no provider', async () => {
+    const captured: Array<{ provider?: string; model?: string }> = []
+    const ctx = {
+      get: (key: string) => key === 'llm'
+        ? {
+            stream: async function* (opts: { provider?: string; model?: string }) {
+              captured.push(opts)
+              throw new Error('stop-here')
+            },
+          }
+        : { currentSelection: () => ({ provider: 'default-p', model: 'default-m' }) },
+      logger: () => {},
+    } as any
+
+    const extract = buildLlmExtractor(ctx, {
+      modelOverride: () => ({ provider: '', model: 'ignore-me' }),
+    })!
+    await expect(extract('x')).rejects.toThrow('stop-here')
+    expect(captured[0]).toMatchObject({ provider: 'default-p', model: 'default-m' })
+  })
+
+  it('yields nothing when the enabled gate is off (caller falls back to rules)', async () => {
+    let called = false
+    const ctx = {
+      get: (key: string) => key === 'llm'
+        ? { stream: async function* () { called = true; yield {} } }
+        : { currentSelection: () => ({ provider: 'p', model: 'm' }) },
+      logger: () => {},
+    } as any
+
+    const extract = buildLlmExtractor(ctx, { enabled: () => false })!
+    expect(await extract('x')).toEqual([])
+    expect(called).toBe(false)
+  })
 })
