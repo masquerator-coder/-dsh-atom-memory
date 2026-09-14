@@ -514,6 +514,43 @@ window.__ModuleLoader__.load({
 		function withoutUid(rows) {
 			return rows.map(({ uid: _uid, ...rest }) => rest);
 		}
+		/**
+		* A text field that owns its draft while the user types and commits it on blur
+		* or Enter.
+		*
+		* A bare `<input value={x} onBlur={...} />` is NOT usable here: React treats a
+		* `value` prop without `onChange` as a read-only field ("You provided a `value`
+		* prop to a form field without an `onChange` handler"), so every keystroke is
+		* reverted and the value never reaches the DOM — the field can never be filled
+		* in. Holding the draft locally fixes that, and committing on blur (instead of
+		* per keystroke) keeps a settings round-trip off the typing path.
+		*/
+		function DraftInput(props) {
+			const { value, placeholder, type, autoComplete, onCommit } = props;
+			const [draft, setDraft] = (0, react.useState)(value);
+			/** Read through a ref so the sync effect below needs no extra re-render. */
+			const editingRef = (0, react.useRef)(false);
+			(0, react.useEffect)(() => {
+				if (!editingRef.current) setDraft(value);
+			}, [value]);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+				type: type ?? "text",
+				autoComplete,
+				placeholder,
+				value: draft,
+				onChange: (e) => setDraft(e.currentTarget.value),
+				onFocus: () => {
+					editingRef.current = true;
+				},
+				onBlur: (e) => {
+					editingRef.current = false;
+					if (e.currentTarget.value !== value) onCommit(e.currentTarget.value);
+				},
+				onKeyDown: (e) => {
+					if (e.key === "Enter") e.currentTarget.blur();
+				}
+			});
+		}
 		function MemorySettingsSection(props) {
 			const { t } = props;
 			const state = props.useMemorySettings((snapshot) => snapshot);
@@ -619,13 +656,13 @@ window.__ModuleLoader__.load({
 									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
 										className: css.fieldLabel,
 										children: t("modelProviderLabel")
-									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DraftInput, {
 										placeholder: t("modelProviderPlaceholder"),
 										value: state.section.extractionModel?.provider ?? "",
-										onBlur: (e) => {
+										onCommit: (next) => {
 											props.setExtractionModelOverride({
 												...state.section.extractionModel ?? {},
-												provider: e.currentTarget.value
+												provider: next
 											});
 										}
 									})]
@@ -635,13 +672,13 @@ window.__ModuleLoader__.load({
 									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
 										className: css.fieldLabel,
 										children: t("modelNameLabel")
-									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DraftInput, {
 										placeholder: t("modelNamePlaceholder"),
 										value: state.section.extractionModel?.model ?? "",
-										onBlur: (e) => {
+										onCommit: (next) => {
 											props.setExtractionModelOverride({
 												...state.section.extractionModel ?? {},
-												model: e.currentTarget.value
+												model: next
 											});
 										}
 									})]
@@ -651,13 +688,13 @@ window.__ModuleLoader__.load({
 									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
 										className: css.fieldLabel,
 										children: t("modelBaseUrlLabel")
-									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DraftInput, {
 										placeholder: t("modelBaseUrlPlaceholder"),
 										value: state.section.extractionModel?.baseURL ?? "",
-										onBlur: (e) => {
+										onCommit: (next) => {
 											props.setExtractionModelOverride({
 												...state.section.extractionModel ?? {},
-												baseURL: e.currentTarget.value.trim()
+												baseURL: next.trim()
 											});
 										}
 									})]
@@ -686,15 +723,15 @@ window.__ModuleLoader__.load({
 									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
 										className: css.fieldLabel,
 										children: t("modelApiKeyLabel")
-									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DraftInput, {
 										type: "password",
 										autoComplete: "off",
 										placeholder: t("modelApiKeyPlaceholder"),
 										value: state.section.extractionModel?.apiKey ?? "",
-										onBlur: (e) => {
+										onCommit: (next) => {
 											props.setExtractionModelOverride({
 												...state.section.extractionModel ?? {},
-												apiKey: e.currentTarget.value
+												apiKey: next
 											});
 										}
 									})]

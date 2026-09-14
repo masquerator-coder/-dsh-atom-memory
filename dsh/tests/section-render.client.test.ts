@@ -32,17 +32,26 @@ function useSnapshotHook<T>(store: { getSnapshot(): T; subscribe(fn: () => void)
 }
 
 function buildController(seedFacts = false, seedProfile = false) {
+  // A real in-memory settings scope: `set` persists the key and notifies
+  // subscribers, so the controller's publish -> re-render -> draft-resync path
+  // is exercised instead of being stubbed away.
+  let section: Record<string, unknown> = {
+    enabled: true, captureEnabled: true, llmExtractionEnabled: true,
+    contextInjectionEnabled: true, extractionModel: undefined,
+  }
+  const listeners = new Set<() => void>()
   const scope = {
     getSnapshot: () => ({
       status: 'ready' as const,
-      value: {
-        enabled: true, captureEnabled: true, llmExtractionEnabled: true,
-        contextInjectionEnabled: true, extractionModel: undefined,
-      },
+      value: section,
       base: undefined, user: undefined, revision: 1, writable: true, mode: 'host' as const,
     }),
-    subscribe: () => () => {},
-    set: async () => {}, unset: async () => {}, mutate: async () => {},
+    subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn) } },
+    set: async (key: string, value: unknown) => {
+      section = { ...section, [key]: value }
+      for (const fn of [...listeners]) fn()
+    },
+    unset: async () => {}, mutate: async () => {},
   }
   const remote = {
     listFacts: async () => ({
@@ -120,6 +129,21 @@ async function typeInto(input: HTMLInputElement, text: string): Promise<void> {
 }
 
 afterEach(cleanup)
+
+/**
+ * Record every extraction-model write while still applying it for real, so the
+ * merge-with-existing-override behaviour (and the write-back into the field) is
+ * observable instead of stubbed away.
+ */
+function spyModelWrites(props: { setExtractionModelOverride: unknown }): Array<Record<string, unknown>> {
+  const commits: Array<Record<string, unknown>> = []
+  const real = props.setExtractionModelOverride as (o: Record<string, unknown>) => Promise<void>
+  props.setExtractionModelOverride = (async (override: Record<string, unknown>) => {
+    commits.push(override)
+    await real(override)
+  }) as never
+  return commits
+}
 
 describe('MemorySettingsSection client render', () => {
   it('renders and runs effects without throwing', async () => {
@@ -262,5 +286,73 @@ describe('MemorySettingsSection client render', () => {
     expect(screen.getByText('API 地址 (Base URL)')).toBeTruthy()
     expect(screen.getByText('API 协议')).toBeTruthy()
     expect(screen.getByText('API 密钥')).toBeTruthy()
+  })
+
+  /**
+   * Regression: the manual-model fields were `<input value={x} onBlur={...} />`
+   * with no `onChange`. React renders a `value` prop without `onChange` as a
+   * read-only field, so the keystrokes were reverted and the value never
+   * reached the DOM — the fields could not be filled in at all.
+   */
+  it('accepts typing in the manual-model fields and commits the draft on blur', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    const commits = spyModelWrites(props)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByText('手动指定模型'))
+    })
+
+    const provider = screen.getByPlaceholderText('Provider ID，如 deepseek') as HTMLInputElement
+    const model = screen.getByPlaceholderText('如 deepseek-chat') as HTMLInputElement
+    const baseURL = screen.getByPlaceholderText('如 https://api.deepseek.com/v1') as HTMLInputElement
+    const apiKey = screen.getByPlaceholderText('sk-...') as HTMLInputElement
+    expect(provider.type).toBe('text')
+    expect(apiKey.type).toBe('password')
+
+    await typeInto(provider, 'deepseek')
+    await act(async () => { provider.blur() })
+    await typeInto(model, 'deepseek-chat')
+    await act(async () => { model.blur() })
+    await typeInto(baseURL, '  https://api.deepseek.com/v1  ')
+    await act(async () => { baseURL.blur() })
+    await typeInto(apiKey, 'sk-secret')
+    await act(async () => { apiKey.blur() })
+
+    expect(commits).toEqual([
+      { provider: 'deepseek' },
+      { provider: 'deepseek', model: 'deepseek-chat' },
+      { provider: 'deepseek', model: 'deepseek-chat', baseURL: 'https://api.deepseek.com/v1' },
+      { provider: 'deepseek', model: 'deepseek-chat', baseURL: 'https://api.deepseek.com/v1', apiKey: 'sk-secret' },
+    ])
+  })
+
+  it('commits a manual-model edit on Enter and leaves an untouched field alone', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    const commits = spyModelWrites(props)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByText('手动指定模型'))
+    })
+
+    const provider = screen.getByPlaceholderText('Provider ID，如 deepseek') as HTMLInputElement
+    provider.focus()
+    await act(async () => {
+      fireEvent.change(provider, { target: { value: 'openai' } })
+    })
+    await act(async () => {
+      fireEvent.keyDown(provider, { key: 'Enter' })
+    })
+    expect(commits).toEqual([{ provider: 'openai' }])
+
+    // Blurring an unchanged field must not write again.
+    provider.blur()
+    await act(async () => {})
+    expect(commits).toHaveLength(1)
   })
 })

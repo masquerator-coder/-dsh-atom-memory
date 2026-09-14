@@ -94,6 +94,57 @@ function withoutUid<T extends { uid: number }>(rows: T[]): Omit<T, 'uid'>[] {
   return rows.map(({ uid: _uid, ...rest }) => rest)
 }
 
+/**
+ * A text field that owns its draft while the user types and commits it on blur
+ * or Enter.
+ *
+ * A bare `<input value={x} onBlur={...} />` is NOT usable here: React treats a
+ * `value` prop without `onChange` as a read-only field ("You provided a `value`
+ * prop to a form field without an `onChange` handler"), so every keystroke is
+ * reverted and the value never reaches the DOM — the field can never be filled
+ * in. Holding the draft locally fixes that, and committing on blur (instead of
+ * per keystroke) keeps a settings round-trip off the typing path.
+ */
+function DraftInput(props: {
+  /** The committed value owned by the settings document. */
+  value: string
+  placeholder?: string
+  type?: 'text' | 'password'
+  autoComplete?: string
+  /** Called with the current draft when the edit is done (blur / Enter). */
+  onCommit: (value: string) => void
+}) {
+  const { value, placeholder, type, autoComplete, onCommit } = props
+  const [draft, setDraft] = useState(value)
+  /** Read through a ref so the sync effect below needs no extra re-render. */
+  const editingRef = useRef(false)
+
+  // Adopt external updates (settings reload, a sibling field's write) only while
+  // this field is idle — never mid-edit, which would clobber what is typed.
+  useEffect(() => {
+    if (!editingRef.current) setDraft(value)
+  }, [value])
+
+  return (
+    <input
+      type={type ?? 'text'}
+      autoComplete={autoComplete}
+      placeholder={placeholder}
+      value={draft}
+      onChange={(e) => setDraft(e.currentTarget.value)}
+      onFocus={() => { editingRef.current = true }}
+      onBlur={(e) => {
+        editingRef.current = false
+        if (e.currentTarget.value !== value) onCommit(e.currentTarget.value)
+      }}
+      onKeyDown={(e) => {
+        // Enter is an explicit "done": blur commits through the same path.
+        if (e.key === 'Enter') e.currentTarget.blur()
+      }}
+    />
+  )
+}
+
 export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   const { t } = props
   const state = props.useMemorySettings(snapshot => snapshot)
@@ -205,36 +256,36 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
           <div>
             <div className={css.field}>
               <label className={css.fieldLabel}>{t('modelProviderLabel')}</label>
-              <input
+              <DraftInput
                 placeholder={t('modelProviderPlaceholder')}
                 value={state.section.extractionModel?.provider ?? ''}
-                onBlur={(e) => {
+                onCommit={(next) => {
                   void props.setExtractionModelOverride({
-                    ...(state.section.extractionModel ?? {}), provider: e.currentTarget.value,
+                    ...(state.section.extractionModel ?? {}), provider: next,
                   })
                 }}
               />
             </div>
             <div className={css.field}>
               <label className={css.fieldLabel}>{t('modelNameLabel')}</label>
-              <input
+              <DraftInput
                 placeholder={t('modelNamePlaceholder')}
                 value={state.section.extractionModel?.model ?? ''}
-                onBlur={(e) => {
+                onCommit={(next) => {
                   void props.setExtractionModelOverride({
-                    ...(state.section.extractionModel ?? {}), model: e.currentTarget.value,
+                    ...(state.section.extractionModel ?? {}), model: next,
                   })
                 }}
               />
             </div>
             <div className={css.field}>
               <label className={css.fieldLabel}>{t('modelBaseUrlLabel')}</label>
-              <input
+              <DraftInput
                 placeholder={t('modelBaseUrlPlaceholder')}
                 value={state.section.extractionModel?.baseURL ?? ''}
-                onBlur={(e) => {
+                onCommit={(next) => {
                   void props.setExtractionModelOverride({
-                    ...(state.section.extractionModel ?? {}), baseURL: e.currentTarget.value.trim(),
+                    ...(state.section.extractionModel ?? {}), baseURL: next.trim(),
                   })
                 }}
               />
@@ -254,14 +305,14 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
             </div>
             <div className={css.field}>
               <label className={css.fieldLabel}>{t('modelApiKeyLabel')}</label>
-              <input
+              <DraftInput
                 type="password"
                 autoComplete="off"
                 placeholder={t('modelApiKeyPlaceholder')}
                 value={state.section.extractionModel?.apiKey ?? ''}
-                onBlur={(e) => {
+                onCommit={(next) => {
                   void props.setExtractionModelOverride({
-                    ...(state.section.extractionModel ?? {}), apiKey: e.currentTarget.value,
+                    ...(state.section.extractionModel ?? {}), apiKey: next,
                   })
                 }}
               />

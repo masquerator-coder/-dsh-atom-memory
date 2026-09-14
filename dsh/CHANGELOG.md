@@ -27,6 +27,30 @@
   `~/.dsh/profiles/web/node_modules/dsh-atom-memory/dsh/lib/` 的 4 个产物
   （去掉换行差异后逐字符一致）；客户端 bundle 变更需刷新设置页面（或重启 dsh）生效。
 
+### Fixed (第六轮附带：手动指定模型的四个字段其实根本无法输入)
+- **现象**（同一面板另一处输入缺陷，排查上一条时由 React 运行期警告暴露）：
+  「手动指定模型」下的 Provider ID / 模型名 / API 地址(Base URL) / API 密钥
+  四个输入框**完全无法填写**——敲进去的值不落盘。
+- **根因**：这四个字段写成了 `<input value={x} onBlur={...} />`，**只有 `value` 没有 `onChange`**。
+  React 对「受控但无 `onChange`」的输入框按**只读字段**处理并打印
+  "You provided a `value` prop to a form field without an `onChange` handler"，
+  每次按键都被回滚，值永远进不了 DOM（`onBlur` 提交的自然是空串）。
+  取证：点开「手动指定模型」后往 Provider 输入 `a`，`input.value` 仍为 `''`
+  （焦点没丢，但值写不进），即该功能从未可用。
+- **修复**：新增 `DraftInput` 组件——聚焦/输入期间用**本地草稿 state**，`blur` 或 `Enter`
+  时经 `onCommit` 提交；未处于编辑态时用 `useEffect` 跟随外部值回填
+  （编辑中绝不回灌，避免覆盖正在输入的内容）。四个字段改用它，
+  「合并已有 override」与 `trim()` 语义原样保留；`Enter` 显式 `blur()` 复用同一条提交路径。
+  顺带保证 blur 未改动不发写请求。
+- **测试**：新增两例——① 逐字符输入四个字段后逐一失焦，断言提交载荷**逐步合并**
+  （`{provider}` → `{provider,model}` → `{provider,model,baseURL}` → `+apiKey`）
+  且 baseURL 两端空格被 `trim`、Provider 为 `text`、密钥为 `password`；
+  ② `Enter` 提交一次、未改动字段再次失焦**不重复写**。
+  配套把测试里的 settings scope 桩从 `set: async () => {}` 换成**真实内存 store**
+  （`set` 落库并通知订阅者），使「写入 → publish → 重渲染 → 草稿回填」整条链路被真实覆盖；
+  写入 spy 改为「记录 + 真实落库」而非替换掉真实写入。
+  全量 `vitest` 12 文件 90 例全绿，React 只读字段警告归零，`tsc --noEmit` 干净。
+
 ### Fixed (第五轮：设置弹窗 memory.md 与注入视图对齐)
 - **现象**：重新安装插件并重启 dsh 后，设置界面「查看 memory.md」弹窗内容"仍是旧格式"
   （带 `# 记忆 (Memory) — global` 标题、每条 `fact_id`、`> 知识内容` 子行）。
