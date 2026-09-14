@@ -31,8 +31,45 @@ export const MIN_INJECTED_MD_TOKENS = 100
  */
 export const MAX_INJECTED_MD_TOKENS = 20_000
 
-/** The preset ladder offered by the settings panel, smallest first. */
-export const INJECTED_MD_TOKEN_PRESETS = [300, 800, 1500] as const
+/**
+ * The gear ladder the settings panel's slider snaps to, smallest first.
+ *
+ * The panel offers fixed gears rather than a free number: the budget is paid on
+ * every request of a session, so a slipped digit (8000 instead of 800) would
+ * silently multiply the recurring cost of every new session, and a free field
+ * has no way to show the user which side of "cheap / expensive" they landed on.
+ * The ladder spans "one screen of headline memory" (300) to "practically the
+ * whole store" (12000); the budget is a *cap*, not a target, so a large gear
+ * costs nothing while the store is smaller than it.
+ */
+export const INJECTED_MD_TOKEN_PRESETS = [300, 800, 1500, 3000, 6000, 12_000] as const
+
+/**
+ * Index of the ladder gear nearest to `value`.
+ *
+ * The panel's slider is positioned by this index, so a settings document that
+ * holds an off-ladder number (a value typed into the old free-text field, or
+ * set from the plugin composition) still parks the handle next to the gear it
+ * is closest to. Ties go to the smaller gear — the conservative side, since the
+ * budget is a recurring cost. Unusable values clamp first, so they resolve to
+ * the default's gear rather than to `NaN`.
+ *
+ * @param value - The configured budget, from settings or the composition entry.
+ * @returns A valid index into {@link INJECTED_MD_TOKEN_PRESETS}.
+ */
+export function nearestInjectedMdPresetIndex(value: unknown): number {
+  const tokens = clampInjectedMdTokens(value)
+  let best = 0
+  let bestDelta = Number.POSITIVE_INFINITY
+  for (let i = 0; i < INJECTED_MD_TOKEN_PRESETS.length; i += 1) {
+    const delta = Math.abs(INJECTED_MD_TOKEN_PRESETS[i]! - tokens)
+    if (delta < bestDelta) {
+      bestDelta = delta
+      best = i
+    }
+  }
+  return best
+}
 
 /**
  * Coerce an arbitrary value into a usable budget.

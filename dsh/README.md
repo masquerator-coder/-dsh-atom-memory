@@ -43,7 +43,7 @@ pnpm build       # -> lib/index.mjs
 | `nudgeIntervalMinutes` | `30` | 微调周期 |
 | `maxRecalledFacts` | `10` | 每次召回给模型的条数上限 |
 | `memoryMdTokens` | `1500` | `memory_memory_md` 工具返回的 memory.md 完整清单 token 上限（设置弹窗走同一预算，但取紧凑深度） |
-| `injectedMemoryMdTokens` | `800` | 注入系统提示词的紧凑快照 token 上限（与上者分开：注入内容每个请求都要付费）。**仅作为初值**：运行时由设置面板的「注入体积」接管 |
+| `injectedMemoryMdTokens` | `800` | 注入系统提示词的紧凑快照 token 上限（与上者分开：注入内容每个请求都要付费）。**仅作为初值**：运行时由设置面板的「系统提示词注入体积」滑块接管（固定挡位 300 / 800 / 1500 / 3000 / 6000 / 12000） |
 | `contextInjectionEnabled` | `true` | 会话起始冻结快照注入系统提示词 |
 | `rpcTimeoutMs` | `30000` | 单次 RPC 超时 |
 
@@ -60,11 +60,19 @@ pnpm build       # -> lib/index.mjs
 | 功能 | 说明 | 走线 |
 | --- | --- | --- |
 | 记忆开关 | `enabled` 主开关，实时热切换 | `settings<atom-memory>.enabled` → host `Runtime` |
-| 注入体积 | memory.md 注入系统提示词的大小：档位（精简 300 / 标准 800 / 详尽 1500）+ 自定义（100–20000 tokens，越界自动收敛） | `settings<atom-memory>.injectedMemoryMdTokens` → `context.ts` 冻结时求值 |
+| 系统提示词注入体积（memory.md） | 注入快照的大小，**滑块 + 固定挡位**（精简 300 / 标准 800 / 详尽 1500 / 充裕 3000 / 宽阔 6000 / 超大 12000 tokens）。预算是**上限而非目标**：记忆没到上限就一条都不丢，所以放大挡位只在记忆确实很多时才多花钱；挡位是离散的，因此不会因少打一个 0 就把每个请求的开销放大十倍。落在挡位之间的旧值（旧「自定义」输入或插件配置）会把滑块停在最接近的挡位并**明示自己不在挡位梯上**，拨动后才切到固定挡位 | `settings<atom-memory>.injectedMemoryMdTokens` → `context.ts` 冻结时求值 |
 | LLM 抽取模型 | 跟随 dsh 默认 / 手动 provider+model | `settings<atom-memory>.extractionModel` → `llm-extractor` |
-| user 画像编辑 | 画像行增删改（`user_explicit` 最高优先级） | `remote.atomMemory.listProfile/upsertProfile/deleteProfile` |
+| user 画像编辑 | 画像行增删改（`user_explicit` 最高优先级）；每行可勾「**固定**」 | `remote.atomMemory.listProfile/upsertProfile/deleteProfile` |
 | 记忆与编辑 | 原子事实列表查看/编辑（SPO/content/type），摘要查看；「查看 memory.md」弹窗渲染**与注入系统提示词完全相同**的紧凑视图（按类型分组、不含 `fact_id`） | `remote.atomMemory.listFacts/editFact/memoryMd` |
 | 记忆备份与恢复 | 导出 JSON / 上传导入（replace 语义） | `remote.atomMemory.backup/restore` |
+
+> **「固定」画像行（pinned）**：画像是对活跃事实的**派生视图**，因此一条更新的矛盾事实
+> 默认会把同 (section, key) 的行改写掉。勾选「固定」后该行**不再被记忆自动更新或替代**：
+> facts → profile 的投影直接跳过它（`profile.upsert_profile` 在 `pinned` 且调用方未声明
+> 固定状态时返回 `False`），只有设置面板里的手动编辑——包括取消固定——才会改动它。固定状态
+> 随 `backup`/`restore` 一起往返（对比之后仍固定，不会被恢复动作悄悄解冻），`memory_user_md`
+> 渲染时会在来源后标出 `固定`，让模型知道哪些属性的稳定是刻意的。数据库 schema 升到 v4
+> （`user_profile.pinned`，历史行一律为 0 = 未固定）。
 
 > **浏览器端构建说明**：dsh 宿主对 `exports["./client"]` 是**原样当作浏览器
 > bundle 服务**的（`client-modules` 直接 `readFileSync` 该文件，不编译 TS/TSX），

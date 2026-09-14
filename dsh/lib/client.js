@@ -12,12 +12,51 @@ window.__ModuleLoader__.load({
 		* pasted number) cannot silently inflate every request of every session.
 		*/
 		const MAX_INJECTED_MD_TOKENS = 2e4;
-		/** The preset ladder offered by the settings panel, smallest first. */
+		/**
+		* The gear ladder the settings panel's slider snaps to, smallest first.
+		*
+		* The panel offers fixed gears rather than a free number: the budget is paid on
+		* every request of a session, so a slipped digit (8000 instead of 800) would
+		* silently multiply the recurring cost of every new session, and a free field
+		* has no way to show the user which side of "cheap / expensive" they landed on.
+		* The ladder spans "one screen of headline memory" (300) to "practically the
+		* whole store" (12000); the budget is a *cap*, not a target, so a large gear
+		* costs nothing while the store is smaller than it.
+		*/
 		const INJECTED_MD_TOKEN_PRESETS = [
 			300,
 			800,
-			1500
+			1500,
+			3e3,
+			6e3,
+			12e3
 		];
+		/**
+		* Index of the ladder gear nearest to `value`.
+		*
+		* The panel's slider is positioned by this index, so a settings document that
+		* holds an off-ladder number (a value typed into the old free-text field, or
+		* set from the plugin composition) still parks the handle next to the gear it
+		* is closest to. Ties go to the smaller gear — the conservative side, since the
+		* budget is a recurring cost. Unusable values clamp first, so they resolve to
+		* the default's gear rather than to `NaN`.
+		*
+		* @param value - The configured budget, from settings or the composition entry.
+		* @returns A valid index into {@link INJECTED_MD_TOKEN_PRESETS}.
+		*/
+		function nearestInjectedMdPresetIndex(value) {
+			const tokens = clampInjectedMdTokens(value);
+			let best = 0;
+			let bestDelta = Number.POSITIVE_INFINITY;
+			for (let i = 0; i < INJECTED_MD_TOKEN_PRESETS.length; i += 1) {
+				const delta = Math.abs(INJECTED_MD_TOKEN_PRESETS[i] - tokens);
+				if (delta < bestDelta) {
+					bestDelta = delta;
+					best = i;
+				}
+			}
+			return best;
+		}
 		/**
 		* Coerce an arbitrary value into a usable budget.
 		*
@@ -96,7 +135,7 @@ window.__ModuleLoader__.load({
 					saveFact: (fact) => this.saveFact(fact),
 					deleteFact: (factId) => this.deleteFact(factId),
 					fetchMemoryMd: () => this.fetchMemoryMd(),
-					upsertProfile: (section, key, value) => this.upsertProfile(section, key, value),
+					upsertProfile: (section, key, value, pinned) => this.upsertProfile(section, key, value, pinned),
 					deleteProfile: (section, key) => this.deleteProfile(section, key),
 					saveAllFacts: (rows) => this.saveAllFacts(rows),
 					saveAllProfile: (rows) => this.saveAllProfile(rows),
@@ -197,13 +236,14 @@ window.__ModuleLoader__.load({
 					throw err;
 				}
 			}
-			async upsertProfile(section, key, value) {
+			async upsertProfile(section, key, value, pinned) {
 				try {
 					await this.r().upsertProfile({
 						user: USER,
 						section,
 						key,
-						value
+						value,
+						pinned
 					});
 					await this.refreshData();
 				} catch (err) {
@@ -262,7 +302,8 @@ window.__ModuleLoader__.load({
 						user: USER,
 						section: row.section,
 						key: row.key,
-						value: row.value
+						value: row.value,
+						pinned: row.pinned === true
 					});
 					await this.refreshData();
 				} catch (err) {
@@ -304,15 +345,17 @@ window.__ModuleLoader__.load({
 				intro: "管理 dsh-atom-memory 的记忆能力：开关、抽取模型、用户画像、记忆内容与备份恢复。",
 				masterHeader: "记忆开关",
 				masterDesc: "关闭后停用记忆插件：不再捕获、不再注入上下文，记忆工具也会拒绝调用。打开即时恢复。",
-				injectHeader: "注入体积（memory.md）",
+				injectHeader: "系统提示词注入体积（memory.md）",
+				injectSliderLabel: "挡位",
 				injectPresetCompact: "精简 · {tokens} tokens",
 				injectPresetStandard: "标准 · {tokens} tokens",
 				injectPresetDetailed: "详尽 · {tokens} tokens",
-				injectCustom: "自定义",
-				injectCustomLabel: "自定义预算（tokens）",
-				injectCustomPlaceholder: "如 1200",
-				injectRange: "可填 {min} – {max}，超范围会自动收敛到边界。",
-				injectHint: "当前 {tokens} tokens。预算越紧，越优先保留最重要且最新的记忆，被舍弃的条目由页脚注明；预算只影响注入系统提示词的那份快照，且仅对之后的新会话生效——已冻结的会话保持原样，以免破坏 KV 缓存。",
+				injectPresetAmple: "充裕 · {tokens} tokens",
+				injectPresetBroad: "宽阔 · {tokens} tokens",
+				injectPresetMax: "超大 · {tokens} tokens",
+				injectSliderHint: "拖动滑块在固定挡位之间切换：{rungs} tokens。",
+				injectOffGrid: "当前 {tokens} tokens 不在挡位梯上（来自旧的自定义值或插件配置）；拖动滑块即切到最接近的固定挡位。",
+				injectHint: "当前 {tokens} tokens。预算是上限而非目标：记忆总量没到上限就一条都不会被舍弃，所以放大挡位只在记忆确实很多时才多花钱。预算越紧，越优先保留最重要且最新的记忆，被舍弃的条目由页脚注明；预算只影响注入系统提示词的那份快照，且仅对之后的新会话生效——已冻结的会话保持原样，以免破坏 KV 缓存。",
 				modelHeader: "LLM 抽取模型",
 				modelFollowDefault: "跟随 dsh 默认模型",
 				modelManual: "手动指定模型",
@@ -340,6 +383,8 @@ window.__ModuleLoader__.load({
 				profileColSection: "Section",
 				profileColKey: "Key",
 				profileColValue: "Value",
+				profileColPinned: "固定",
+				profilePinnedHint: "勾选“固定”的画像条目不会被记忆自动更新或替代——只有你在这里手动改动它才会变。",
 				memoryHeader: "记忆与编辑",
 				factsHeader: "原子事实",
 				factsEmpty: "暂无原子事实。",
@@ -378,15 +423,17 @@ window.__ModuleLoader__.load({
 				intro: "Manage dsh-atom-memory: master switch, extraction model, user profile, memory content, and backup/restore.",
 				masterHeader: "Memory switch",
 				masterDesc: "When off the memory plugin is disabled: no capture, no context injection, and memory tools refuse calls. Turning on restores immediately.",
-				injectHeader: "Injected size (memory.md)",
+				injectHeader: "System-prompt injection size (memory.md)",
+				injectSliderLabel: "Gear",
 				injectPresetCompact: "Compact · {tokens} tokens",
 				injectPresetStandard: "Standard · {tokens} tokens",
 				injectPresetDetailed: "Detailed · {tokens} tokens",
-				injectCustom: "Custom",
-				injectCustomLabel: "Custom budget (tokens)",
-				injectCustomPlaceholder: "e.g. 1200",
-				injectRange: "Allowed {min} – {max}; out-of-range values snap to the nearest bound.",
-				injectHint: "Currently {tokens} tokens. The tighter the budget, the more it keeps the most important and most recent memory, with the footer naming what was left out. It only affects the snapshot injected into the system prompt, and only from the next new session — sessions already frozen keep their text, so the KV cache stays valid.",
+				injectPresetAmple: "Ample · {tokens} tokens",
+				injectPresetBroad: "Broad · {tokens} tokens",
+				injectPresetMax: "Maximum · {tokens} tokens",
+				injectSliderHint: "Drag the slider across the fixed gears: {rungs} tokens.",
+				injectOffGrid: "The current {tokens} tokens is off the gear ladder (set by the old custom field or the plugin composition); moving the slider snaps it to the nearest fixed gear.",
+				injectHint: "Currently {tokens} tokens. The budget is a cap, not a target: while the stored memory is smaller, nothing is dropped and a larger gear costs nothing extra. The tighter the budget, the more it keeps the most important and most recent memory, with the footer naming what was left out. It only affects the snapshot injected into the system prompt, and only from the next new session — sessions already frozen keep their text, so the KV cache stays valid.",
 				modelHeader: "LLM extraction model",
 				modelFollowDefault: "Follow the dsh default model",
 				modelManual: "Specify a model manually",
@@ -414,6 +461,8 @@ window.__ModuleLoader__.load({
 				profileColSection: "Section",
 				profileColKey: "Key",
 				profileColValue: "Value",
+				profileColPinned: "Pinned",
+				profilePinnedHint: "A pinned profile row is never updated or replaced by memory automatically — only your own edit here changes it.",
 				memoryHeader: "Memory & edit",
 				factsHeader: "Atomic facts",
 				factsEmpty: "No atomic facts yet.",
@@ -510,6 +559,15 @@ window.__ModuleLoader__.load({
 .atom-memory-editor input,.atom-memory-editor textarea{width:100%;box-sizing:border-box;padding:5px 7px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:5px;background:var(--dsw-alias-bg-layer-1,#1f2126);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px}
 .atom-memory-editor textarea{min-height:34px;resize:vertical}
 .atom-memory-editor-row-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end;white-space:nowrap}
+/* The pin checkbox must not inherit the table's full-width text-input skin. */
+.atom-memory-editor input.atom-memory-pin{width:auto;padding:0;margin:0;border:none;background:transparent;cursor:pointer}
+
+/* Injection-budget gear slider: a discrete handle plus its gear labels. The
+   field skin (border/background/padding) is for text inputs — a native range
+   has to keep its own track, so it is reset here. */
+.atom-memory-field input.atom-memory-slider{width:100%;padding:0;margin:2px 0 0;border:none;background:transparent;accent-color:var(--dsw-alias-button-primary-fill,rgb(65,118,230))}
+.atom-memory-ticks{display:flex;justify-content:space-between;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;color:var(--dsw-alias-label-secondary,#8a8f98)}
+.atom-memory-tick-active{color:var(--dsw-alias-label-primary,#e6e8eb);font-weight:700}
 `;
 		/** Ensure the stylesheet is present exactly once (data-plugin guarded). */
 		function ensureMemorySettingsStyle() {
@@ -556,6 +614,11 @@ window.__ModuleLoader__.load({
 			btnPrimary: "atom-memory-btn-primary",
 			btnDanger: "atom-memory-btn-danger",
 			btnRowDelete: "atom-memory-btn-row-delete",
+			slider: "atom-memory-slider",
+			ticks: "atom-memory-ticks",
+			tick: "atom-memory-tick",
+			tickActive: "atom-memory-tick-active",
+			pin: "atom-memory-pin",
 			memoryMdView: "atom-memory-memory-md",
 			overlay: "atom-memory-overlay",
 			modal: "atom-memory-modal",
@@ -565,12 +628,17 @@ window.__ModuleLoader__.load({
 			editor: "atom-memory-editor",
 			editorRowActions: "atom-memory-editor-row-actions"
 		};
-		/** Locale key of each preset rung shown in the panel. */
+		/** Locale key of each gear shown in the panel, smallest gear first. */
 		const PRESET_LABEL_KEYS = {
 			300: "injectPresetCompact",
 			800: "injectPresetStandard",
-			1500: "injectPresetDetailed"
+			1500: "injectPresetDetailed",
+			3e3: "injectPresetAmple",
+			6e3: "injectPresetBroad",
+			12e3: "injectPresetMax"
 		};
+		/** DOM id of the injection-budget slider (its `<label>` points at it). */
+		const BUDGET_SLIDER_ID = "atom-memory-inject-budget";
 		/** Monotonic source of client-side draft-row identities. */
 		let draftSeq = 0;
 		/** @returns a fresh, process-unique draft-row identity. */
@@ -628,7 +696,9 @@ window.__ModuleLoader__.load({
 			const [modelManual, setModelManual] = (0, react.useState)(() => Boolean(state.section.extractionModel?.provider || state.section.extractionModel?.model));
 			/** The committed injection budget (the Host clamps it on the way in). */
 			const tokens = state.section.injectedMemoryMdTokens;
-			const [budgetCustom, setBudgetCustom] = (0, react.useState)(() => !INJECTED_MD_TOKEN_PRESETS.includes(tokens));
+			const rungIndex = nearestInjectedMdPresetIndex(tokens);
+			const rung = INJECTED_MD_TOKEN_PRESETS[rungIndex];
+			const offGrid = rung !== tokens;
 			const openMemoryMd = () => {
 				setModal("memoryMd");
 				if (state.data.memoryMd === void 0) {
@@ -699,48 +769,42 @@ window.__ModuleLoader__.load({
 						disabled: !state.available,
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("injectHeader") }),
-							INJECTED_MD_TOKEN_PRESETS.map((preset) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-								className: css.radioRow,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-									type: "radio",
-									name: "injected-md-budget",
-									checked: !budgetCustom && tokens === preset,
-									onChange: () => {
-										setBudgetCustom(false);
-										props.setInjectedMemoryMdTokens(preset);
-									}
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t(PRESET_LABEL_KEYS[preset], { tokens: String(preset) }) })]
-							}, preset)),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-								className: css.radioRow,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-									type: "radio",
-									name: "injected-md-budget",
-									checked: budgetCustom,
-									onChange: () => setBudgetCustom(true)
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("injectCustom") })]
-							}),
-							budgetCustom && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: css.field,
 								children: [
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
 										className: css.fieldLabel,
-										children: t("injectCustomLabel")
+										htmlFor: BUDGET_SLIDER_ID,
+										children: t("injectSliderLabel")
 									}),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DraftInput, {
-										placeholder: t("injectCustomPlaceholder"),
-										value: String(tokens),
-										normalize: (raw) => String(clampInjectedMdTokens(raw)),
-										onCommit: (next) => {
-											props.setInjectedMemoryMdTokens(Number(next));
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+										id: BUDGET_SLIDER_ID,
+										className: css.slider,
+										type: "range",
+										min: 0,
+										max: INJECTED_MD_TOKEN_PRESETS.length - 1,
+										step: 1,
+										value: rungIndex,
+										"aria-valuetext": t(PRESET_LABEL_KEYS[rung], { tokens: String(rung) }),
+										onChange: (e) => {
+											const next = INJECTED_MD_TOKEN_PRESETS[Number(e.currentTarget.value)];
+											if (next !== void 0) props.setInjectedMemoryMdTokens(next);
 										}
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: css.ticks,
+										children: INJECTED_MD_TOKEN_PRESETS.map((preset, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: i === rungIndex ? css.tickActive : css.tick,
+											children: preset
+										}, preset))
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 										className: css.hint,
-										children: t("injectRange", {
-											min: String(100),
-											max: String(2e4)
-										})
+										children: offGrid ? t("injectOffGrid", { tokens: String(tokens) }) : t(PRESET_LABEL_KEYS[rung], { tokens: String(rung) })
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+										className: css.hint,
+										children: t("injectSliderHint", { rungs: INJECTED_MD_TOKEN_PRESETS.join(" / ") })
 									})
 								]
 							}),
@@ -1157,6 +1221,7 @@ window.__ModuleLoader__.load({
 				section: r.section,
 				key: r.key,
 				value: r.value,
+				pinned: r.pinned === true,
 				deleted: false
 			})));
 			const [saving, setSaving] = (0, react.useState)(false);
@@ -1169,6 +1234,7 @@ window.__ModuleLoader__.load({
 				section: "",
 				key: "",
 				value: "",
+				pinned: false,
 				deleted: false
 			}]);
 			const save = () => {
@@ -1196,49 +1262,66 @@ window.__ModuleLoader__.load({
 				title: t("profileModalTitle"),
 				footer,
 				onClose,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("table", {
-					className: css.editor,
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", { children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColSection") }),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColKey") }),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColValue") }),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colActions") })
-					] }) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("tbody", { children: rows.map((row, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", {
-						style: row.deleted ? { opacity: .45 } : void 0,
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: row.section,
-								disabled: row.deleted,
-								onChange: (e) => setRow(i, { section: e.currentTarget.value })
-							}) }),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: row.key,
-								disabled: row.deleted,
-								onChange: (e) => setRow(i, { key: e.currentTarget.value })
-							}) }),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								value: row.value,
-								disabled: row.deleted,
-								onChange: (e) => setRow(i, { value: e.currentTarget.value })
-							}) }),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-								className: css.editorRowActions,
-								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-									type: "button",
-									className: css.btnRowDelete,
-									onClick: () => setRow(i, { deleted: !row.deleted }),
-									children: row.deleted ? t("addRow") : t("factDelete")
-								})
-							}) })
-						]
-					}, row.uid)) })]
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-					type: "button",
-					className: css.add,
-					style: { marginTop: 10 },
-					onClick: addRow,
-					children: t("addRow")
-				})]
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("table", {
+						className: css.editor,
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", { children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColSection") }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColKey") }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColValue") }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("profileColPinned") }),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colActions") })
+						] }) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("tbody", { children: rows.map((row, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", {
+							style: row.deleted ? { opacity: .45 } : void 0,
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									value: row.section,
+									disabled: row.deleted,
+									onChange: (e) => setRow(i, { section: e.currentTarget.value })
+								}) }),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									value: row.key,
+									disabled: row.deleted,
+									onChange: (e) => setRow(i, { key: e.currentTarget.value })
+								}) }),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									value: row.value,
+									disabled: row.deleted,
+									onChange: (e) => setRow(i, { value: e.currentTarget.value })
+								}) }),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									type: "checkbox",
+									className: css.pin,
+									"aria-label": t("profileColPinned"),
+									checked: row.pinned === true,
+									disabled: row.deleted,
+									onChange: (e) => setRow(i, { pinned: e.currentTarget.checked })
+								}) }),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+									className: css.editorRowActions,
+									children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: css.btnRowDelete,
+										onClick: () => setRow(i, { deleted: !row.deleted }),
+										children: row.deleted ? t("addRow") : t("factDelete")
+									})
+								}) })
+							]
+						}, row.uid)) })]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+						className: css.hint,
+						style: { marginTop: 8 },
+						children: t("profilePinnedHint")
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+						type: "button",
+						className: css.add,
+						style: { marginTop: 10 },
+						onClick: addRow,
+						children: t("addRow")
+					})
+				]
 			});
 		}
 		//#endregion

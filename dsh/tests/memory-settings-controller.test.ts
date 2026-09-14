@@ -237,8 +237,32 @@ describe('MemorySettingsController', () => {
       { section: '背景', key: '职业', value: '工程师', deleted: false },
       { section: '偏好', key: '语言', value: 'Python', deleted: true },
     ])
-    expect(upsertProfile).toHaveBeenCalledWith({ user: 'global', section: '背景', key: '职业', value: '工程师' })
+    // Rows without an explicit pin are saved unpinned; the flag is always sent
+    // so an omitted one cannot leave a stale pin behind.
+    expect(upsertProfile).toHaveBeenCalledWith({
+      user: 'global', section: '背景', key: '职业', value: '工程师', pinned: false,
+    })
     expect(deleteProfile).toHaveBeenCalledWith({ user: 'global', section: '偏好', key: '语言' })
     expect(listProfile.mock.calls.length).toBeGreaterThan(0)
+  })
+
+  it('carries the 固定 flag through a profile batch save and a single upsert', async () => {
+    const { scope } = fakeScope(snapshot({}))
+    const { remote } = fakeRemote()
+    const upsertProfile = remote.upsertProfile as ReturnType<typeof vi.fn>
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
+    const face = controller.inject()
+
+    await face.saveAllProfile([
+      { section: '背景', key: '职业', value: '工程师', pinned: true, deleted: false },
+    ])
+    expect(upsertProfile).toHaveBeenCalledWith({
+      user: 'global', section: '背景', key: '职业', value: '工程师', pinned: true,
+    })
+
+    await face.upsertProfile('背景', '职业', '工程师', false)
+    expect(upsertProfile).toHaveBeenLastCalledWith({
+      user: 'global', section: '背景', key: '职业', value: '工程师', pinned: false,
+    })
   })
 })

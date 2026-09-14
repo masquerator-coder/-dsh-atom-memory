@@ -10,7 +10,9 @@ Restore uses "replace semantics": the target user's active facts and profile
 rows are soft-retracted first, then the snapshot is written back as new
 ``user_explicit`` facts and profile rows. This keeps the restore deterministic
 and avoids resurrecting stale duplicates against live memory, at the cost of
-losing fact identity across a restore (ids are regenerated). It honours the
+losing fact identity across a restore (ids are regenerated). The user's pinned
+profile rows round-trip with their pin intact, so a restore cannot silently
+unfreeze an attribute the user had declared fixed. It honours the
 library's soft-delete invariant on the old rows and always stays committed
 inside one transaction so a failed import leaves memory untouched.
 
@@ -28,6 +30,12 @@ from .db import now_ms
 from .retriever import segment_text
 
 # Snapshot format version, bumped on any structurally breaking change.
+#
+# The profile rows carry an optional `pinned` flag (schema v4). It is additive:
+# an older snapshot without the key restores as unpinned, and an older reader of
+# a newer snapshot simply ignores the extra key, so the version stays put — a
+# bump here would make the version-equality check in `validate_backup` reject
+# every snapshot users already exported.
 BACKUP_VERSION = 1
 
 # Column groups round-tripped through a snapshot. `user_id` is intentionally
@@ -40,7 +48,7 @@ _FACT_KEYS = (
 )
 _PROFILE_KEYS = (
     "section", "key", "value", "source", "confidence", "privacy",
-    "updated_at",
+    "pinned", "updated_at",
 )
 
 
@@ -71,7 +79,7 @@ def export_memory(conn: sqlite3.Connection, user_id: str) -> dict:
 
     profile_rows = conn.execute(
         "SELECT user_id, section, key, value, source, confidence, privacy, "
-        "updated_at FROM user_profile WHERE user_id = ? ORDER BY section, key",
+        "pinned, updated_at FROM user_profile WHERE user_id = ? ORDER BY section, key",
         (user_id,),
     ).fetchall()
     profile = [{k: r[k] for k in _PROFILE_KEYS} for r in profile_rows]
@@ -177,13 +185,16 @@ async def import_memory(
                 continue
             conn.execute(
                 "INSERT OR REPLACE INTO user_profile(user_id, section, key, "
-                "value, source, confidence, privacy, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "value, source, confidence, privacy, pinned, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     user_id, section, key, value,
                     str(p.get("source", "user_explicit")),
                     float(p.get("confidence", 0.5)),
                     str(p.get("privacy", "private")),
+                    # A snapshot from before the pin existed simply has no
+                    # `pinned` key; such rows restore as unpinned.
+                    1 if p.get("pinned") else 0,
                     int(p.get("updated_at", now)),
                 ),
             )

@@ -57,6 +57,15 @@ export const memorySettingsStyleText = `
 .atom-memory-editor input,.atom-memory-editor textarea{width:100%;box-sizing:border-box;padding:5px 7px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:5px;background:var(--dsw-alias-bg-layer-1,#1f2126);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px}
 .atom-memory-editor textarea{min-height:34px;resize:vertical}
 .atom-memory-editor-row-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end;white-space:nowrap}
+/* The pin checkbox must not inherit the table's full-width text-input skin. */
+.atom-memory-editor input.atom-memory-pin{width:auto;padding:0;margin:0;border:none;background:transparent;cursor:pointer}
+
+/* Injection-budget gear slider: a discrete handle plus its gear labels. The
+   field skin (border/background/padding) is for text inputs — a native range
+   has to keep its own track, so it is reset here. */
+.atom-memory-field input.atom-memory-slider{width:100%;padding:0;margin:2px 0 0;border:none;background:transparent;accent-color:var(--dsw-alias-button-primary-fill,rgb(65,118,230))}
+.atom-memory-ticks{display:flex;justify-content:space-between;font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;color:var(--dsw-alias-label-secondary,#8a8f98)}
+.atom-memory-tick-active{color:var(--dsw-alias-label-primary,#e6e8eb);font-weight:700}
 `
 
 /** Ensure the stylesheet is present exactly once (data-plugin guarded). */

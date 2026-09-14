@@ -31,6 +31,11 @@ export interface ProfileEditInput {
   section: string
   key?: string
   value: string
+  /**
+   * Pin the row against automatic memory writes. Omitted means "leave the
+   * existing pin state alone" — the panel only sends what it knows.
+   */
+  pinned?: boolean
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -126,7 +131,7 @@ export class AtomMemoryController extends TypertRemoteService {
     return this.bridge.call('list_profile', { user_id: args.user }) as Promise<Record<string, unknown>>
   }
 
-  /** Add or update one profile row. */
+  /** Add or update one profile row (an explicit user edit — pins included). */
   @Remote
   async upsertProfile(args: { user: string } & ProfileEditInput): Promise<Record<string, unknown>> {
     this.assertReady()
@@ -136,6 +141,7 @@ export class AtomMemoryController extends TypertRemoteService {
       section: args.section,
       key: args.key,
       value: args.value,
+      pinned: args.pinned,
     }) as Promise<Record<string, unknown>>
   }
 

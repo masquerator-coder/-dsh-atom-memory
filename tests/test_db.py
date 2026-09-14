@@ -149,6 +149,39 @@ def test_all_fact_columns_exist(tmp_path):
     assert expected.issubset(cols)
 
 
+def test_all_profile_columns_exist(tmp_path):
+    """The user_profile table must expose every required column, `pinned`
+    included — it is what freezes a row against automatic memory updates."""
+    conn = open_db(MemConfig(db_path=str(tmp_path / "test.db")))
+    try:
+        cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(user_profile)").fetchall()
+        }
+    finally:
+        conn.close()
+
+    expected = {
+        "user_id", "section", "key", "value", "source", "confidence",
+        "privacy", "pinned", "updated_at",
+    }
+    assert expected.issubset(cols)
+
+
+def test_pinned_column_defaults_to_unpinned(tmp_path):
+    """A profile row written without a pin is not pinned."""
+    conn = open_db(MemConfig(db_path=str(tmp_path / "test.db")))
+    try:
+        conn.execute(
+            "INSERT INTO user_profile(user_id, section, key, value, updated_at) "
+            "VALUES ('u1', '职业', 'value', '工程师', 1000)"
+        )
+        conn.commit()
+        row = conn.execute("SELECT pinned FROM user_profile").fetchone()
+        assert row["pinned"] == 0
+    finally:
+        conn.close()
+
+
 def test_type_column_defaults_semantic(tmp_path):
     """The new type column defaults to 'semantic' for untouched rows."""
     conn = open_db(MemConfig(db_path=str(tmp_path / "test.db")))
@@ -201,6 +234,14 @@ def test_v1_database_upgrades_to_v2_with_type_default(tmp_path):
             status TEXT NOT NULL DEFAULT 'pending',
             idempotency_key TEXT UNIQUE, created_at INTEGER NOT NULL
         );
+        CREATE TABLE user_profile (
+            user_id TEXT NOT NULL, section TEXT NOT NULL, key TEXT NOT NULL,
+            value TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'system_inferred',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            privacy TEXT NOT NULL DEFAULT 'private',
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, section, key)
+        );
         PRAGMA user_version = 1;
         """
     )
@@ -208,6 +249,12 @@ def test_v1_database_upgrades_to_v2_with_type_default(tmp_path):
         "INSERT INTO facts(fact_id, user_id, session_id, subject, predicate, "
         "object, observed_at, created_at) VALUES ('f1','u1','s1','用户',"
         "'偏好','黑咖啡',1000,1000)"
+    )
+    # A genuine v1 database already carries user_profile (migration 001 creates
+    # it) — the later `pinned` migration alters exactly this table.
+    raw.execute(
+        "INSERT INTO user_profile(user_id, section, key, value, updated_at) "
+        "VALUES ('u1','职业','value','工程师',1000)"
     )
     raw.commit()
     raw.close()
@@ -220,12 +267,15 @@ def test_v1_database_upgrades_to_v2_with_type_default(tmp_path):
         ).fetchone()
         assert row is not None
         assert row["type"] == "semantic"
+        prof = conn.execute("SELECT pinned FROM user_profile").fetchone()
+        assert prof["pinned"] == 0
     finally:
         conn.close()
 
 
 def test_v2_database_upgrades_to_v3_with_null_content(tmp_path):
-    """A database at user_version=2 upgrades to v3 and adds a NULL content col."""
+    """A database at user_version=2 upgrades through v3 (NULL content column)
+    and v4 (profile `pinned`) in one open."""
     import sqlite3
 
     path = str(tmp_path / "legacy_v2.db")
@@ -262,6 +312,14 @@ def test_v2_database_upgrades_to_v3_with_null_content(tmp_path):
             idempotency_key TEXT UNIQUE,
             created_at INTEGER NOT NULL
         );
+        CREATE TABLE user_profile (
+            user_id TEXT NOT NULL, section TEXT NOT NULL, key TEXT NOT NULL,
+            value TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'system_inferred',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            privacy TEXT NOT NULL DEFAULT 'private',
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, section, key)
+        );
         PRAGMA user_version = 2;
         """
     )
@@ -269,6 +327,10 @@ def test_v2_database_upgrades_to_v3_with_null_content(tmp_path):
         "INSERT INTO facts(fact_id, user_id, session_id, subject, predicate, "
         "object, observed_at, created_at) VALUES ('f1','u1','s1','用户',"
         "'偏好','黑咖啡',1000,1000)"
+    )
+    raw.execute(
+        "INSERT INTO user_profile(user_id, section, key, value, updated_at) "
+        "VALUES ('u1','职业','value','工程师',1000)"
     )
     raw.commit()
     raw.close()
@@ -282,6 +344,8 @@ def test_v2_database_upgrades_to_v3_with_null_content(tmp_path):
         # pre-existing rows get type default and NULL content
         assert row["type"] == "semantic"
         assert row["content"] is None
+        # ...and pre-existing profile rows stay live but unpinned.
+        assert conn.execute("SELECT pinned FROM user_profile").fetchone()["pinned"] == 0
         # column accepts a structured body
         conn.execute(
             "UPDATE facts SET content = ? WHERE fact_id = ?",
@@ -291,6 +355,44 @@ def test_v2_database_upgrades_to_v3_with_null_content(tmp_path):
         assert conn.execute(
             "SELECT content FROM facts WHERE fact_id = ?", ("f1",)
         ).fetchone()["content"] == '{"steps":["a","b"]}'
+    finally:
+        conn.close()
+
+
+def test_v3_database_upgrades_to_v4_unpinned(tmp_path):
+    """A database at user_version=3 gains `pinned`, defaulted to "not pinned".
+
+    Migration 004 must retro-fit rows that predate the pin: an existing
+    deployment's profile is live and editable, never silently frozen.
+    """
+    import sqlite3
+
+    path = str(tmp_path / "legacy_v3.db")
+    raw = sqlite3.connect(path)
+    raw.executescript(
+        """
+        CREATE TABLE user_profile (
+            user_id TEXT NOT NULL, section TEXT NOT NULL, key TEXT NOT NULL,
+            value TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'system_inferred',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            privacy TEXT NOT NULL DEFAULT 'private',
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, section, key)
+        );
+        INSERT INTO user_profile(user_id, section, key, value, updated_at)
+            VALUES ('u1','职业','value','工程师',1000);
+        PRAGMA user_version = 3;
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    conn = open_db(MemConfig(db_path=path))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        row = conn.execute("SELECT value, pinned FROM user_profile").fetchone()
+        assert row["value"] == "工程师"
+        assert row["pinned"] == 0
     finally:
         conn.close()
 

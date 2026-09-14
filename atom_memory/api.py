@@ -694,12 +694,13 @@ class AtomMem:
 
         Returns:
             ``{"profile": [...]}`` rows with ``section`` / ``key`` / ``value`` /
-            ``source`` / ``privacy``.
+            ``source`` / ``privacy`` / ``pinned`` (whether the row is fixed
+            against automatic memory updates).
         """
         if self.db is None:
             raise RuntimeError("AtomMem is not started; call start() first")
         rows = self.db.execute(
-            "SELECT section, key, value, source, privacy FROM user_profile "
+            "SELECT section, key, value, source, privacy, pinned FROM user_profile "
             "WHERE user_id = ? ORDER BY section, key",
             (user_id,),
         ).fetchall()
@@ -711,6 +712,7 @@ class AtomMem:
                     "value": r["value"],
                     "source": r["source"],
                     "privacy": r["privacy"],
+                    "pinned": bool(r["pinned"]),
                 }
                 for r in rows
             ]
@@ -722,20 +724,29 @@ class AtomMem:
         section: str,
         key: str,
         value: str,
+        pinned: Optional[bool] = None,
     ) -> dict:
         """Add or update one user-profile row (user-invoked UI edit).
 
         Rows written here are tagged with the most-authoritative ``user_explicit``
         source so they are never silently downgraded by later derived writes.
 
+        This is the one write path that may touch a **pinned** row: the pin's
+        owner is the human in the panel, so editing a value here — or flipping
+        the pin itself — has to work, or a pinned row could never be corrected
+        or released. Every automatic path goes through
+        :func:`atom_memory.profile.upsert_profile`, which refuses pinned rows.
+
         Args:
             user_id: Owner of the profile.
             section: Profile section (predicate).
             key: Key within the section (use ``"value"`` for simple rows).
             value: The stored value.
+            pinned: New pin state; ``None`` keeps the row's current state (and
+                means unpinned for a new row).
 
         Returns:
-            ``{"ok": True}``.
+            ``{"ok": True, "pinned": bool}``.
         """
         if self.db is None:
             raise RuntimeError("AtomMem is not started; call start() first")
@@ -744,21 +755,33 @@ class AtomMem:
         value = str(value).strip()
         if not section or not key:
             raise ValueError("profile section and key are required")
+        pinned_flag = None if pinned is None else (1 if pinned else 0)
         conn = self.db
         conn.execute(
             "INSERT INTO user_profile(user_id, section, key, value, source, "
-            "confidence, privacy, updated_at) VALUES (?, ?, ?, ?, "
-            "'user_explicit', 0.9, 'private', ?) "
+            "confidence, privacy, pinned, updated_at) VALUES (?, ?, ?, ?, "
+            "'user_explicit', 0.9, 'private', COALESCE(?, 0), ?) "
             "ON CONFLICT(user_id, section, key) DO UPDATE SET "
             "value = excluded.value, source = 'user_explicit', "
-            "confidence = 0.9, updated_at = excluded.updated_at",
-            (user_id, section, key, value, now_ms()),
+            "confidence = 0.9, pinned = COALESCE(?, pinned), "
+            "updated_at = excluded.updated_at",
+            (user_id, section, key, value, pinned_flag, now_ms(), pinned_flag),
         )
         conn.commit()
-        return {"ok": True}
+        row = conn.execute(
+            "SELECT pinned FROM user_profile "
+            "WHERE user_id = ? AND section = ? AND key = ?",
+            (user_id, section, key),
+        ).fetchone()
+        return {"ok": True, "pinned": bool(row["pinned"]) if row else False}
 
     def delete_profile(self, user_id: str, section: str, key: str) -> dict:
         """Delete one user-profile row.
+
+        Deletion is an explicit act only: nothing in the memory pipeline deletes
+        profile rows, so a pinned row is deleted like any other when the user
+        asks for it (the pin freezes automatic *updates*, not the user's own
+        editorial actions).
 
         Args:
             user_id: Owner of the profile.

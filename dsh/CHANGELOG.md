@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+### Added (第九轮：注入体积改滑块固定挡位 + 画像「固定」条目)
+- **「注入体积（memory.md）」更名为「系统提示词注入体积（memory.md）」**：这个名字才是它
+  真正管的东西——会话起始冻结进**系统提示词**的那份快照（`memoryMdTokens` 工具预算不是它）。
+- **设置方式由「radio 档位 + 自定义数字框」改为滑块 + 固定挡位**：挡位梯
+  `300 / 800 / 1500 / 3000 / 6000 / 12000`（`src/injection-budget.ts` 的
+  `INJECTED_MD_TOKEN_PRESETS`，两半共用一份）。
+  - 滑块位置按**档位序号**而非 token 数：挡位本身是不等距的（300→800→1500），线性 token
+    轴会把便宜端的几个挡位挤进最前面几个像素，几乎点不中。
+  - 写出去的值永远是**档位 token**，不是序号（序号 0 写 300，不是 0）；`aria-valuetext`
+    报的是挡位名（「标准 · 800 tokens」）而不是一个下标。
+  - 挡位是**离散**的，因此少打/多打一个 0 无法把每个请求的注入开销放大十倍——注入内容
+    每个请求都要付费，这是唯一有**复发性成本**的记忆旋钮。
+  - hint 补上「预算是上限而非目标」：记忆总量没到上限就一条都不丢，所以放大挡位只在记忆
+    确实很多时才多花钱。
+  - **落在挡位之间的旧值**（旧的「自定义」输入、或 `Config.injectedMemoryMdTokens` 配置）
+    仍可用：滑块停在**最接近**的挡位（`nearestInjectedMdPresetIndex`，平局取更小的挡位＝
+    更省的一侧），同时明示「当前 N tokens 不在挡位梯上」，拨动滑块即切到固定挡位。host 侧
+    的 `clampInjectedMdTokens` 边界（100–20000）保持不变，仍是配置值的安全网。
+  - 自定义输入框及 `injectCustom*` / `injectRange` 文案随之删除。
+- **User 画像条目新增「固定」（pinned）选项**：勾选后该条**不会被记忆自动更新或替代**。
+  - 画像是对活跃事实的派生视图，默认一条更新的矛盾事实就会改写同 (section, key) 的行。
+    现在 `profile.upsert_profile` 在「行已固定且调用方未声明固定状态」时直接返回 `False`，
+    于是 `derive_profile_from_facts` 跳过它——固定是**独立于 source 优先级**的第二道锁：
+    即便派生写入的 source 更强也不会覆盖。
+  - 手动写入是唯一出口（面板编辑、含取消固定）：`api.upsert_profile` 走自己的 SQL，
+    `pinned` 省略时保留原状态、传入时设定，因此固定行仍可被本人修正或解冻。
+  - schema **v4**：`user_profile.pinned INTEGER NOT NULL DEFAULT 0`（migration
+    `004_init.sql`）。历史行一律 0＝未固定——升级不会把任何既有画像悄悄冻住。
+  - 备份/恢复带 `pinned` 往返（`_PROFILE_KEYS`），恢复不会悄悄解冻用户声明固定的属性；
+    旧快照没有该键则恢复为未固定。`BACKUP_VERSION` 保持 1：加键是**加法**，bump 会让
+    `validate_backup` 的版本相等校验拒绝用户已导出的所有快照。
+  - `memory_user_md` / `user_md` 渲染在来源后标 `固定`，让模型知道哪些属性的稳定是刻意的；
+    `list_profile` 返回 `pinned` 供面板回显。
+  - 面板画像表格新增「固定」列（复选框），勾选态随保存一起写回，并在表下说明它的语义。
+- **测试**：vitest 新增/改写 9 例（滑块停靠默认挡位、写档位值而非序号、挡位梯可见、
+  off-ladder 停靠最近挡位并明示、改名后旧名不再出现、固定列渲染与保存载荷、已固定行回显
+  勾选、滑块/复选框的 class 与样式表一致、`nearestInjectedMdPresetIndex` 的边界与默认
+  回落）；pytest 新增 6 例（挡位映射、
+  固定行挡住派生写入并可解冻、面板路径可设定/保留固定状态、`user_md` 标出固定、
+  备份往返保固定、旧快照恢复为未固定、v1→v2/v2→v3/v3→v4 迁移与列存在性）。
+  `pytest` **181 passed / 1 skipped**，vitest **110 passed**，tsc（host+client）无错。
+- **注**：`dsh/lib` 产物需重建（客户端 bundle 改了）；Python 侧为 editable 安装，
+  运行中的 bridge 子进程需重启才会加载新逻辑，且数据库会在启动时自动迁移到 v4。
+
 ### Added (第八轮：memory.md 每行长度上限，确保记忆精炼)
 - **注入版每条渲染行整体不超过 80 字符**（`_MAX_COMPACT_LINE_CHARS`）。收口点是唯一的
   ——`_render_section_lines` 对**所有**行形（知识正文标题、`predicate: value` 属性折叠行、

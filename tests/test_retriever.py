@@ -284,6 +284,57 @@ def test_upsert_profile_source_priority():
         conn.close()
 
 
+def test_pinned_profile_row_blocks_automatic_writes():
+    """A pinned row is frozen: derived writes may not update or replace it.
+
+    Only a write that carries the pin explicitly (the settings panel toggling
+    it) gets through, which is what makes the flag releasable at all.
+    """
+    from atom_memory.profile import upsert_profile
+
+    conn = connect_for_tests()
+    try:
+        assert upsert_profile(
+            conn, "u1", "职业", "value", "工程师",
+            source="user_explicit", confidence=0.9,
+        )
+        # The panel's write path: value plus the pin itself.
+        assert upsert_profile(
+            conn, "u1", "职业", "value", "工程师",
+            source="user_explicit", confidence=0.9, pinned=True,
+        )
+        assert conn.execute(
+            "SELECT pinned FROM user_profile WHERE user_id='u1'"
+        ).fetchone()["pinned"] == 1
+
+        # A derived write of equal (or higher) authority would normally win —
+        # the pin is what stops it, not the source ranking.
+        assert upsert_profile(
+            conn, "u1", "职业", "value", "产品经理",
+            source="user_explicit", confidence=0.9,
+        ) is False
+        assert conn.execute(
+            "SELECT value FROM user_profile WHERE user_id='u1'"
+        ).fetchone()["value"] == "工程师"
+
+        # Unpinning releases the row back to the normal rules.
+        assert upsert_profile(
+            conn, "u1", "职业", "value", "工程师",
+            source="user_explicit", confidence=0.9, pinned=False,
+        )
+        assert upsert_profile(
+            conn, "u1", "职业", "value", "产品经理",
+            source="user_explicit", confidence=0.9,
+        )
+        row = conn.execute(
+            "SELECT value, pinned FROM user_profile WHERE user_id='u1'"
+        ).fetchone()
+        assert row["value"] == "产品经理"
+        assert row["pinned"] == 0
+    finally:
+        conn.close()
+
+
 def test_derive_profile_from_facts_single_and_multi():
     from atom_memory.profile import derive_profile_from_facts
 

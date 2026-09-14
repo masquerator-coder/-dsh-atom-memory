@@ -55,6 +55,17 @@ Implemented incrementally behind human review gates — **all four stages done**
   `importance`/`confidence` (with a type-rank fallback), which is what makes
   "most important first" mean anything — see
   [`memory.md` — one view, two depths](#memorymd--one-view-two-depths).
+- **Pinned (固定) profile rows (done).** The user profile is a derived view over
+  active facts, so by default a newer contradicting fact rewrites the row it
+  owns. A profile row can now be **pinned** in the settings panel, which freezes
+  it against the memory pipeline: the facts → profile projection skips it
+  entirely (`profile.upsert_profile` refuses when the caller states no pin
+  state), and only an explicit edit in the panel — including releasing the pin —
+  changes it. The flag is a second lock, independent of source priority, so even
+  a more authoritative derived write cannot replace a pinned row; it round-trips
+  through backup/restore (a restore cannot silently unfreeze it), and `user_md`
+  marks fixed rows so a reader can tell which stability is deliberate (schema v4,
+  migration `004_init.sql`).
 
 ## Installation
 
@@ -173,10 +184,17 @@ measured on the **assembled artifact** (body + that very footer), so the token
 budget is a hard cap on what is actually returned.
 
 The budget for the injected snapshot is user-configurable in the dsh settings
-panel (**注入体积**: presets 300 / 800 / 1500 tokens, or a custom value in
-100–20000) and defaults to 800. It is resolved when a session freezes its
-snapshot, so a change applies to every session that has not frozen yet, while
-already-frozen sessions keep their byte-identical text and their KV cache.
+panel (**系统提示词注入体积（memory.md）**: a slider over the fixed gears
+300 / 800 / 1500 / 3000 / 6000 / 12000 tokens) and defaults to 800. Gears rather
+than a free number, because this is the one memory knob whose cost recurs on
+*every* request of a session: a slipped digit cannot silently multiply it, and
+the budget is a cap rather than a target, so a large gear costs nothing while
+the store is smaller than it. A settings value between gears (from the old
+custom field, or from the plugin composition) parks the handle on the nearest
+gear and says that it is off the ladder instead of pretending to be that gear.
+The budget is resolved when a session freezes its snapshot, so a change applies
+to every session that has not frozen yet, while already-frozen sessions keep
+their byte-identical text and their KV cache.
 
 `fact_id` is deliberately absent from the compact depth: 19 UUIDs cost roughly
 700 tokens, more than they carry information for the model, while every fact
@@ -255,7 +273,9 @@ class MemConfig:
   `migrations/` (`001_init.sql` creates `facts`, `fact_candidates`,
   `summaries`, `user_profile`, `events`, `task_queue` plus the `facts_fts` /
   `facts_vec` virtual tables; `002_init.sql` adds the `type` column; `003_init.sql`
-  adds the `content` body column) with `PRAGMA user_version`-gated migrations.
+  adds the `content` body column; `004_init.sql` adds `user_profile.pinned`, the
+  user's 固定 flag, defaulting every pre-existing row to unpinned) with
+  `PRAGMA user_version`-gated migrations.
 - **Retrieval**: `sqlite-vec` `vec0` KNN (cosine, 512-dim) ⊕ FTS5 (jieba
   word-segmented for Chinese), fused by Reciprocal Rank Fusion and re-ranked
   with the trust/importance/recency formula.
@@ -364,8 +384,10 @@ The plugin ships a browser client-plugin (`dsh/src/client/`) that adds a
    `atom-memory` settings namespace; no restart needed.
 2. **LLM extraction model** — follow the dsh default model or pin a
    provider/model override (`extractionModel`).
-3. **User profile editing** — add/edit/delete profile rows (`upsert_profile` /
-   `delete_profile`), written back as highest-priority `user_explicit`.
+3. **User profile editing** — add/edit/delete profile rows
+   (`upsert_profile` / `delete_profile`), written back as highest-priority
+   `user_explicit`, with a **固定** (pinned) checkbox per row that freezes the
+   row against automatic memory updates.
 4. **Memory & edit** — view and edit atomic facts (`list_facts` / `edit_fact`).
 5. **Backup & restore** — export memory to / import from a JSON file
    (`backup` / `restore`, replace semantics).
@@ -415,12 +437,14 @@ pytest tests/test_integration.py -v
 (cd dsh && pnpm test && pnpm run build)
 ```
 
-The suite covers storage migrations (including v1→v2 `type` and v2→v3 `content`
-upgrades), rule extraction (semantic / procedural / episodic + the
+The suite covers storage migrations (including v1→v2 `type`, v2→v3 `content` and
+v3→v4 `pinned` upgrades), rule extraction (semantic / procedural / episodic + the
 `lesson` / `sop` / `decision_rule` knowledge categories), the validation chain
 (episodic non-conflict, procedural single-valued, degenerate
 placeholder/predicate-echo rejection), retrieval, derived views
-(three-type summary bucketing + light-vs-long knowledge inclusion), the
+(three-type summary bucketing + light-vs-long knowledge inclusion, pinned-profile
+rows surviving the facts → profile projection while the panel's own edit still
+applies), the
 `memory.md` renderer in both depths (`tests/test_memory_md.py`: type grouping,
 no `fact_id`/title/scores in the compact depth, type-rank fallback ordering,
 multi-value folding, the token budget as a hard cap, tail-first trimming), and

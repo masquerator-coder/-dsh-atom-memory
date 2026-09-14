@@ -16,8 +16,13 @@ import { render, screen, act, cleanup, fireEvent, within } from '@testing-librar
 import { createElement } from 'react'
 import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/with-selector'
 import { MemorySettingsController } from '../src/client/memory-settings-controller.ts'
+import type { ProfileEditRow } from '../src/client/memory-settings-controller.ts'
 import { MemorySettingsSection } from '../src/client/MemorySettingsSection.tsx'
 import { dicts, LOCALE_NS } from '../src/client/locales.ts'
+import {
+  DEFAULT_INJECTED_MD_TOKENS,
+  INJECTED_MD_TOKEN_PRESETS,
+} from '../src/injection-budget.ts'
 
 const zh = dicts.zh
 
@@ -31,13 +36,27 @@ function useSnapshotHook<T>(store: { getSnapshot(): T; subscribe(fn: () => void)
   }
 }
 
-function buildController(seedFacts = false, seedProfile = false) {
+/**
+ * Build a controller on a real in-memory settings scope.
+ *
+ * @param seedFacts - Seed one active fact so the facts table has a row.
+ * @param seedProfile - Seed one profile row so the profile table has a row.
+ * @param budget - Initial injection budget; `undefined` keeps the default gear.
+ * @param profilePinned - Whether the seeded profile row starts out pinned.
+ */
+function buildController(
+  seedFacts = false,
+  seedProfile = false,
+  budget: number | undefined = DEFAULT_INJECTED_MD_TOKENS,
+  profilePinned = false,
+) {
   // A real in-memory settings scope: `set` persists the key and notifies
   // subscribers, so the controller's publish -> re-render -> draft-resync path
   // is exercised instead of being stubbed away.
   let section: Record<string, unknown> = {
     enabled: true, captureEnabled: true, llmExtractionEnabled: true,
     contextInjectionEnabled: true, extractionModel: undefined,
+    injectedMemoryMdTokens: budget,
   }
   const listeners = new Set<() => void>()
   const scope = {
@@ -67,7 +86,7 @@ function buildController(seedFacts = false, seedProfile = false) {
       ok: true,
       value: {
         profile: seedProfile
-          ? [{ section: '偏好', key: '回答语言', value: '中文' }]
+          ? [{ section: '偏好', key: '回答语言', value: '中文', pinned: profilePinned }]
           : [],
       },
     }),
@@ -283,69 +302,158 @@ describe('MemorySettingsSection client render', () => {
     }
   })
 
-  it('shows the injected-size presets with the configured budget selected', async () => {
+  it('shows the system-prompt injection size as a gear slider', async () => {
     const controller = buildController()
     const { props } = bind(controller)
     await act(async () => {
       render(createElement(MemorySettingsSection, props))
     })
-    // The default budget is one of the preset rungs, so its radio is checked and
-    // no custom field is offered yet.
-    const standard = screen.getByLabelText('标准 · 800 tokens') as HTMLInputElement
-    expect(standard.checked).toBe(true)
-    expect((screen.getByLabelText('精简 · 300 tokens') as HTMLInputElement).checked).toBe(false)
-    expect(screen.queryByPlaceholderText('如 1200')).toBeNull()
+    // The field is about the *system prompt* snapshot, and says so.
+    expect(screen.getByText('系统提示词注入体积（memory.md）')).toBeTruthy()
+    expect(screen.queryByText('注入体积（memory.md）')).toBeNull()
+
+    const slider = screen.getByLabelText('挡位') as HTMLInputElement
+    expect(slider.type).toBe('range')
+    expect(slider.className).toBe('atom-memory-slider')
+    expect(slider.min).toBe('0')
+    expect(slider.max).toBe(String(INJECTED_MD_TOKEN_PRESETS.length - 1))
+    expect(slider.step).toBe('1')
+    // Parked on the default gear (800), and naming it rather than showing a
+    // bare index to assistive tech.
+    expect(slider.value).toBe('1')
+    expect(slider.getAttribute('aria-valuetext')).toBe('标准 · 800 tokens')
+    expect(screen.getByText('标准 · 800 tokens')).toBeTruthy()
+    // Every gear is visible under the handle, so the ladder is discoverable.
+    for (const preset of INJECTED_MD_TOKEN_PRESETS) {
+      expect(screen.getByText(String(preset))).toBeTruthy()
+    }
     expect(screen.getByText(/当前 800 tokens/)).toBeTruthy()
   })
 
-  it('writes a preset budget through the settings scope', async () => {
+  it('writes the gear value (never the slider index) through the settings scope', async () => {
     const controller = buildController()
     const { props } = bind(controller)
     const writes = spyBudgetWrites(props)
     await act(async () => {
       render(createElement(MemorySettingsSection, props))
     })
+    const slider = screen.getByLabelText('挡位') as HTMLInputElement
+
+    // Index 0 is the cheapest gear — the panel must write 300, not 0.
     await act(async () => {
-      fireEvent.click(screen.getByLabelText('精简 · 300 tokens'))
+      fireEvent.change(slider, { target: { value: '0' } })
     })
-    expect(writes).toEqual([300])
-    // The value round-trips through the scope, so the radio follows it.
-    expect((screen.getByLabelText('精简 · 300 tokens') as HTMLInputElement).checked).toBe(true)
+    expect(writes).toEqual([INJECTED_MD_TOKEN_PRESETS[0]])
+    await act(async () => {})
+    expect(slider.value).toBe('0')
+    expect(screen.getByText('精简 · 300 tokens')).toBeTruthy()
     expect(screen.getByText(/当前 300 tokens/)).toBeTruthy()
+
+    // The top index writes the top gear's token budget.
+    const top = INJECTED_MD_TOKEN_PRESETS.length - 1
+    await act(async () => {
+      fireEvent.change(slider, { target: { value: String(top) } })
+    })
+    expect(writes).toEqual([INJECTED_MD_TOKEN_PRESETS[0], INJECTED_MD_TOKEN_PRESETS[top]])
+    await act(async () => {})
+    expect(slider.value).toBe(String(top))
   })
 
-  it('clamps a custom budget on commit and shows the canonical number', async () => {
-    const controller = buildController()
+  /**
+   * A budget set before the slider existed (the old free-text field) or from the
+   * plugin composition is not on the ladder. The handle still has to sit
+   * somewhere, and the panel must not silently claim the value *is* that gear.
+   */
+  it('parks an off-ladder budget at the nearest gear and says so', async () => {
+    const controller = buildController(false, false, 1200)
     const { props } = bind(controller)
+    // Spy before render: React freezes the props object it was handed.
     const writes = spyBudgetWrites(props)
     await act(async () => {
       render(createElement(MemorySettingsSection, props))
     })
-    await act(async () => {
-      fireEvent.click(screen.getByLabelText('自定义'))
-    })
-    const field = screen.getByPlaceholderText('如 1200') as HTMLInputElement
+    const slider = screen.getByLabelText('挡位') as HTMLInputElement
+    // 1200 is nearer 1500 (index 2) than 800 (index 1).
+    expect(slider.value).toBe('2')
+    expect(screen.getByText(/当前 1200 tokens 不在挡位梯上/)).toBeTruthy()
 
-    // In range: committed verbatim, and the field keeps the value.
+    // Moving the handle snaps the stored value onto the fixed ladder.
     await act(async () => {
-      fireEvent.change(field, { target: { value: '' } })
+      fireEvent.change(slider, { target: { value: '1' } })
     })
-    await typeInto(field, '1200')
-    await act(async () => { field.blur() })
-    expect(writes).toEqual([1200])
-    expect(field.value).toBe('1200')
+    expect(writes).toEqual([INJECTED_MD_TOKEN_PRESETS[1]])
+    await act(async () => {})
+    expect(screen.getByText('标准 · 800 tokens')).toBeTruthy()
+    expect(screen.queryByText(/不在挡位梯上/)).toBeNull()
+  })
 
-    // Out of range and unparsable values snap to something usable instead of
-    // reaching the Host as NaN/negative (the Host clamps again as a backstop).
-    for (const typed of ['9', 'abc']) {
-      await act(async () => { field.focus() })
-      await act(async () => {
-        fireEvent.change(field, { target: { value: typed } })
-      })
-      await act(async () => { field.blur() })
+  it('renders the profile 固定 column and writes the pin with the row', async () => {
+    const controller = buildController(false, true)
+    const { props } = bind(controller)
+    // Spy before render: React freezes the props object it was handed.
+    const saved: ProfileEditRow[][] = []
+    props.saveAllProfile = (async (rows: ProfileEditRow[]) => { saved.push(rows) }) as never
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    await act(async () => {})
+    await act(async () => {
+      fireEvent.click(screen.getByText('编辑画像'))
+    })
+    await act(async () => {})
+
+    // Header + the explanation of what the flag does.
+    expect(screen.getByText('固定')).toBeTruthy()
+    expect(screen.getByText(zh.profilePinnedHint)).toBeTruthy()
+
+    const row = screen.getAllByRole('row')[1]!
+    const box = within(row).getByRole('checkbox') as HTMLInputElement
+    expect(box.checked).toBe(false)
+    expect(box.className).toBe('atom-memory-pin')
+    // The pin is not a text cell: the row still has exactly three inputs.
+    expect(within(row).getAllByRole('textbox')).toHaveLength(3)
+
+    await act(async () => {
+      fireEvent.click(box)
+    })
+    expect(box.checked).toBe(true)
+    await act(async () => {
+      fireEvent.click(screen.getAllByText('保存全部')[0]!)
+    })
+    await act(async () => {})
+
+    expect(saved).toHaveLength(1)
+    expect(saved[0]).toEqual([
+      { section: '偏好', key: '回答语言', value: '中文', pinned: true, deleted: false },
+    ])
+  })
+
+  it('renders an already-pinned profile row as checked', async () => {
+    const controller = buildController(false, true, undefined, true)
+    const { props } = bind(controller)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    await act(async () => {})
+    await act(async () => {
+      fireEvent.click(screen.getByText('编辑画像'))
+    })
+    await act(async () => {})
+    const row = screen.getAllByRole('row')[1]!
+    expect((within(row).getByRole('checkbox') as HTMLInputElement).checked).toBe(true)
+  })
+
+  /**
+   * The class map in the component and the stylesheet in `styles.ts` are two
+   * hand-maintained mirrors (the bundle has no CSS pipeline to check them
+   * against each other). A drifted name renders an unstyled control with no
+   * error anywhere — so assert the two new shapes line up.
+   */
+  it('defines a stylesheet rule for the slider and pin classes it renders', async () => {
+    const { memorySettingsStyleText } = await import('../src/client/styles.ts')
+    for (const cls of ['atom-memory-slider', 'atom-memory-ticks', 'atom-memory-tick-active', 'atom-memory-pin']) {
+      expect(memorySettingsStyleText).toContain(`.${cls}`)
     }
-    expect(writes).toEqual([1200, 100, 800])
-    expect(field.value).toBe('800')
   })
 
   it('reveals the manual-model parameters (base URL / protocol / API key) when manual is selected', async () => {

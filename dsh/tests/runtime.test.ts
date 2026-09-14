@@ -2,9 +2,11 @@ import { describe, it, expect, vi } from 'vitest'
 import { createRuntime, Runtime } from '../src/runtime.ts'
 import {
   DEFAULT_INJECTED_MD_TOKENS,
+  INJECTED_MD_TOKEN_PRESETS,
   MAX_INJECTED_MD_TOKENS,
   MIN_INJECTED_MD_TOKENS,
   clampInjectedMdTokens,
+  nearestInjectedMdPresetIndex,
 } from '../src/injection-budget.ts'
 
 describe('createRuntime', () => {
@@ -55,6 +57,33 @@ describe('clampInjectedMdTokens', () => {
 
   it('accepts a numeric string (a text field submits strings)', () => {
     expect(clampInjectedMdTokens('900')).toBe(900)
+  })
+})
+
+describe('nearestInjectedMdPresetIndex', () => {
+  it('returns the exact gear of an on-ladder budget', () => {
+    INJECTED_MD_TOKEN_PRESETS.forEach((preset, index) => {
+      expect(nearestInjectedMdPresetIndex(preset)).toBe(index)
+    })
+    expect(nearestInjectedMdPresetIndex(DEFAULT_INJECTED_MD_TOKENS))
+      .toBe(INJECTED_MD_TOKEN_PRESETS.indexOf(DEFAULT_INJECTED_MD_TOKENS))
+  })
+
+  it('parks an off-ladder budget at the closest gear', () => {
+    // 1200 is nearer 1500 than 800; 1000 is nearer 800.
+    expect(nearestInjectedMdPresetIndex(1200)).toBe(2)
+    expect(nearestInjectedMdPresetIndex(1000)).toBe(1)
+    // Above the ladder it parks on the top gear, below it on the bottom one.
+    expect(nearestInjectedMdPresetIndex(MAX_INJECTED_MD_TOKENS))
+      .toBe(INJECTED_MD_TOKEN_PRESETS.length - 1)
+    expect(nearestInjectedMdPresetIndex(0)).toBe(0)
+  })
+
+  it('falls back to the default gear for unusable values', () => {
+    const defaultIndex = INJECTED_MD_TOKEN_PRESETS.indexOf(DEFAULT_INJECTED_MD_TOKENS)
+    expect(nearestInjectedMdPresetIndex(Number.NaN)).toBe(defaultIndex)
+    expect(nearestInjectedMdPresetIndex(undefined)).toBe(defaultIndex)
+    expect(nearestInjectedMdPresetIndex('abc')).toBe(defaultIndex)
   })
 })
 

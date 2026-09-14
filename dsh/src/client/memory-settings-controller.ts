@@ -47,7 +47,7 @@ export interface MemoryData {
     type?: string
     content?: string
   }>
-  profile: Array<{ section: string; key: string; value: string }>
+  profile: Array<{ section: string; key: string; value: string; pinned?: boolean }>
   /** The rendered `memory.md` view (injected system-prompt memory), lazy-loaded. */
   memoryMd?: string
 }
@@ -89,7 +89,7 @@ export interface MemorySettingsFace {
   saveFact: (fact: MemoryData['facts'][number]) => Promise<void>
   deleteFact: (factId: string) => Promise<void>
   fetchMemoryMd: () => Promise<string>
-  upsertProfile: (section: string, key: string, value: string) => Promise<void>
+  upsertProfile: (section: string, key: string, value: string, pinned: boolean) => Promise<void>
   deleteProfile: (section: string, key: string) => Promise<void>
   /** Batch-save an Excel-style facts table (edit changed rows, delete marked rows) in one pass. */
   saveAllFacts: (rows: FactEditRow[]) => Promise<void>
@@ -116,6 +116,11 @@ export interface ProfileEditRow {
   section: string
   key: string
   value: string
+  /**
+   * Pinned rows are frozen against the memory pipeline: derived writes from
+   * facts never update or replace them. Only this editor changes a pinned row.
+   */
+  pinned?: boolean
   /** Marked for deletion when saving. */
   deleted?: boolean
 }
@@ -149,7 +154,7 @@ interface RemoteAtomMemory {
   deleteFact(args: { user: string; fact_id: string }): Promise<WireResult<unknown>>
   memoryMd(args: { user: string; maxTokens?: number }): Promise<WireResult<string>>
   listProfile(args: { user: string }): Promise<WireResult<{ profile: MemoryData['profile'] }>>
-  upsertProfile(args: { user: string; section: string; key: string; value: string }): Promise<WireResult<unknown>>
+  upsertProfile(args: { user: string; section: string; key: string; value: string; pinned?: boolean }): Promise<WireResult<unknown>>
   deleteProfile(args: { user: string; section: string; key: string }): Promise<WireResult<unknown>>
   backup(args: { user: string }): Promise<WireResult<Record<string, unknown>>>
   restore(args: { user: string; payload: Record<string, unknown> }): Promise<WireResult<{ facts_written: number; profile_written: number }>>
@@ -207,7 +212,7 @@ export class MemorySettingsController {
       saveFact: (fact) => this.saveFact(fact),
       deleteFact: (factId) => this.deleteFact(factId),
       fetchMemoryMd: () => this.fetchMemoryMd(),
-      upsertProfile: (section, key, value) => this.upsertProfile(section, key, value),
+      upsertProfile: (section, key, value, pinned) => this.upsertProfile(section, key, value, pinned),
       deleteProfile: (section, key) => this.deleteProfile(section, key),
       saveAllFacts: (rows) => this.saveAllFacts(rows),
       saveAllProfile: (rows) => this.saveAllProfile(rows),
@@ -306,9 +311,9 @@ export class MemorySettingsController {
     }
   }
 
-  private async upsertProfile(section: string, key: string, value: string): Promise<void> {
+  private async upsertProfile(section: string, key: string, value: string, pinned: boolean): Promise<void> {
     try {
-      await this.r().upsertProfile({ user: USER, section, key, value })
+      await this.r().upsertProfile({ user: USER, section, key, value, pinned })
       await this.refreshData()
     } catch (err) {
       this.store.set({
@@ -361,6 +366,7 @@ export class MemorySettingsController {
         } else {
           await this.r().upsertProfile({
             user: USER, section: row.section, key: row.key, value: row.value,
+            pinned: row.pinned === true,
           })
         }
       }

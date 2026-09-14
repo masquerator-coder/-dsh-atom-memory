@@ -35,6 +35,11 @@ const css = {
   btnPrimary: 'atom-memory-btn-primary',
   btnDanger: 'atom-memory-btn-danger',
   btnRowDelete: 'atom-memory-btn-row-delete',
+  slider: 'atom-memory-slider',
+  ticks: 'atom-memory-ticks',
+  tick: 'atom-memory-tick',
+  tickActive: 'atom-memory-tick-active',
+  pin: 'atom-memory-pin',
   memoryMdView: 'atom-memory-memory-md',
   overlay: 'atom-memory-overlay',
   modal: 'atom-memory-modal',
@@ -48,20 +53,24 @@ import { LOCALE_NS, type MemorySettingsLocaleKey } from './locales.ts'
 import { ensureMemorySettingsStyle } from './styles.ts'
 import {
   INJECTED_MD_TOKEN_PRESETS,
-  MAX_INJECTED_MD_TOKENS,
-  MIN_INJECTED_MD_TOKENS,
-  clampInjectedMdTokens,
+  nearestInjectedMdPresetIndex,
 } from '../injection-budget.ts'
 import type {
   FactEditRow, MemorySettingsFace, MemorySettingsState, ProfileEditRow,
 } from './memory-settings-controller.ts'
 
-/** Locale key of each preset rung shown in the panel. */
+/** Locale key of each gear shown in the panel, smallest gear first. */
 const PRESET_LABEL_KEYS: Record<(typeof INJECTED_MD_TOKEN_PRESETS)[number], MemorySettingsLocaleKey> = {
   300: 'injectPresetCompact',
   800: 'injectPresetStandard',
   1500: 'injectPresetDetailed',
+  3000: 'injectPresetAmple',
+  6000: 'injectPresetBroad',
+  12000: 'injectPresetMax',
 }
+
+/** DOM id of the injection-budget slider (its `<label>` points at it). */
+const BUDGET_SLIDER_ID = 'atom-memory-inject-budget'
 
 /** Declare the section's locale dictionary namespace (type-only merge). */
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -191,13 +200,15 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
 
   /** The committed injection budget (the Host clamps it on the way in). */
   const tokens = state.section.injectedMemoryMdTokens
-  // Which preset is active is derived from the value, but a user who picked
-  // "自定义" must stay there even before typing a number — same reasoning as
-  // `modelManual` above. The value itself is read from the settings document, so
-  // this holds no budget state of its own.
-  const [budgetCustom, setBudgetCustom] = useState<boolean>(
-    () => !(INJECTED_MD_TOKEN_PRESETS as readonly number[]).includes(tokens),
-  )
+  // The slider is positioned by *gear index*, not by token count: the gears are
+  // deliberately uneven (300 → 800 → 1500 → …), so a linear token axis would
+  // bunch every small gear into the first few pixels and make the cheap end
+  // impossible to hit. Off-ladder values (from the old free-text field, or from
+  // the plugin composition) park the handle at the nearest gear, and the
+  // read-out says so instead of silently pretending they are that gear.
+  const rungIndex = nearestInjectedMdPresetIndex(tokens)
+  const rung = INJECTED_MD_TOKEN_PRESETS[rungIndex]!
+  const offGrid = rung !== tokens
 
   const openMemoryMd = (): void => {
     setModal('memoryMd')
@@ -261,51 +272,41 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
         </label>
       </fieldset>
 
-      {/* 2) injected memory.md budget */}
+      {/* 2) system-prompt injection size — a slider over fixed gears */}
       <fieldset className={css.block} disabled={!state.available}>
         <legend>{t('injectHeader')}</legend>
-        {INJECTED_MD_TOKEN_PRESETS.map((preset) => (
-          <label key={preset} className={css.radioRow}>
-            <input
-              type="radio"
-              name="injected-md-budget"
-              checked={!budgetCustom && tokens === preset}
-              onChange={() => {
-                setBudgetCustom(false)
-                void props.setInjectedMemoryMdTokens(preset)
-              }}
-            />
-            <span>{t(PRESET_LABEL_KEYS[preset], { tokens: String(preset) })}</span>
-          </label>
-        ))}
-        <label className={css.radioRow}>
+        <div className={css.field}>
+          <label className={css.fieldLabel} htmlFor={BUDGET_SLIDER_ID}>{t('injectSliderLabel')}</label>
           <input
-            type="radio"
-            name="injected-md-budget"
-            checked={budgetCustom}
-            onChange={() => setBudgetCustom(true)}
+            id={BUDGET_SLIDER_ID}
+            className={css.slider}
+            type="range"
+            min={0}
+            max={INJECTED_MD_TOKEN_PRESETS.length - 1}
+            step={1}
+            value={rungIndex}
+            // The gear names are the only meaningful reading of the handle
+            // position, so hand assistive tech the label rather than an index.
+            aria-valuetext={t(PRESET_LABEL_KEYS[rung], { tokens: String(rung) })}
+            onChange={(e) => {
+              const next = INJECTED_MD_TOKEN_PRESETS[Number(e.currentTarget.value)]
+              if (next !== undefined) void props.setInjectedMemoryMdTokens(next)
+            }}
           />
-          <span>{t('injectCustom')}</span>
-        </label>
-        {budgetCustom && (
-          <div className={css.field}>
-            <label className={css.fieldLabel}>{t('injectCustomLabel')}</label>
-            <DraftInput
-              placeholder={t('injectCustomPlaceholder')}
-              value={String(tokens)}
-              // Clamp on commit and show the canonical number, so an
-              // out-of-range or unparsable entry visibly corrects itself.
-              normalize={(raw) => String(clampInjectedMdTokens(raw))}
-              onCommit={(next) => { void props.setInjectedMemoryMdTokens(Number(next)) }}
-            />
-            <p className={css.hint}>
-              {t('injectRange', {
-                min: String(MIN_INJECTED_MD_TOKENS),
-                max: String(MAX_INJECTED_MD_TOKENS),
-              })}
-            </p>
+          <div className={css.ticks}>
+            {INJECTED_MD_TOKEN_PRESETS.map((preset, i) => (
+              <span key={preset} className={i === rungIndex ? css.tickActive : css.tick}>{preset}</span>
+            ))}
           </div>
-        )}
+          <p className={css.hint}>
+            {offGrid
+              ? t('injectOffGrid', { tokens: String(tokens) })
+              : t(PRESET_LABEL_KEYS[rung], { tokens: String(rung) })}
+          </p>
+          <p className={css.hint}>
+            {t('injectSliderHint', { rungs: INJECTED_MD_TOKEN_PRESETS.join(' / ') })}
+          </p>
+        </div>
         <p className={css.hint}>{t('injectHint', { tokens: String(tokens) })}</p>
       </fieldset>
 
@@ -639,7 +640,8 @@ function ProfileEditorModal(props: {
   const { t, initial, onSave, onClose } = props
   const [rows, setRows] = useState<ProfileDraft[]>(() =>
     initial.map(r => ({
-      uid: nextDraftUid(), section: r.section, key: r.key, value: r.value, deleted: false,
+      uid: nextDraftUid(), section: r.section, key: r.key, value: r.value,
+      pinned: r.pinned === true, deleted: false,
     })),
   )
   const [saving, setSaving] = useState(false)
@@ -648,7 +650,9 @@ function ProfileEditorModal(props: {
     setRows(prev => prev.map((r, i) => i === index ? { ...r, ...patch } : r))
 
   const addRow = () =>
-    setRows(prev => [...prev, { uid: nextDraftUid(), section: '', key: '', value: '', deleted: false }])
+    setRows(prev => [...prev, {
+      uid: nextDraftUid(), section: '', key: '', value: '', pinned: false, deleted: false,
+    }])
 
   const save = () => {
     setSaving(true)
@@ -672,6 +676,7 @@ function ProfileEditorModal(props: {
             <th>{t('profileColSection')}</th>
             <th>{t('profileColKey')}</th>
             <th>{t('profileColValue')}</th>
+            <th>{t('profileColPinned')}</th>
             <th>{t('colActions')}</th>
           </tr>
         </thead>
@@ -681,6 +686,16 @@ function ProfileEditorModal(props: {
               <td><input value={row.section} disabled={row.deleted} onChange={(e) => setRow(i, { section: e.currentTarget.value })} /></td>
               <td><input value={row.key} disabled={row.deleted} onChange={(e) => setRow(i, { key: e.currentTarget.value })} /></td>
               <td><input value={row.value} disabled={row.deleted} onChange={(e) => setRow(i, { value: e.currentTarget.value })} /></td>
+              <td>
+                <input
+                  type="checkbox"
+                  className={css.pin}
+                  aria-label={t('profileColPinned')}
+                  checked={row.pinned === true}
+                  disabled={row.deleted}
+                  onChange={(e) => setRow(i, { pinned: e.currentTarget.checked })}
+                />
+              </td>
               <td>
                 <div className={css.editorRowActions}>
                   <button
@@ -696,6 +711,7 @@ function ProfileEditorModal(props: {
           ))}
         </tbody>
       </table>
+      <p className={css.hint} style={{ marginTop: 8 }}>{t('profilePinnedHint')}</p>
       <button type="button" className={css.add} style={{ marginTop: 10 }} onClick={addRow}>{t('addRow')}</button>
     </Modal>
   )

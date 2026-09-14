@@ -15,6 +15,7 @@ import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/w
 import { MemorySettingsController } from '../src/client/memory-settings-controller.ts'
 import { MemorySettingsSection } from '../src/client/MemorySettingsSection.tsx'
 import { dicts } from '../src/client/locales.ts'
+import { DEFAULT_INJECTED_MD_TOKENS } from '../src/injection-budget.ts'
 
 const zh = dicts.zh
 
@@ -35,6 +36,7 @@ function buildProps(): Record<string, any> {
       value: {
         enabled: true, captureEnabled: true, llmExtractionEnabled: true,
         contextInjectionEnabled: true, extractionModel: undefined,
+        injectedMemoryMdTokens: DEFAULT_INJECTED_MD_TOKENS,
       },
       base: undefined, user: undefined, revision: 1, writable: true, mode: 'host' as const,
     }),
@@ -53,6 +55,11 @@ function buildProps(): Record<string, any> {
   const controller = new MemorySettingsController(scope as never, remote as never)
   const face = controller.inject()
   const hooks = face.hooks as { memorySettings: { getSnapshot(): unknown; subscribe(fn: () => void): () => void } }
+  // Forward the face verbatim, mirroring the renderer's InjectFace contract
+  // (hooks -> use<Name>, every other member -> a prop of the same name). A
+  // hand-written list silently goes stale whenever a face action is added, and
+  // the missing prop only shows up as a crash at the call site.
+  const { hooks: _hooks, ...actions } = face
   const t = (key: string, params?: Record<string, unknown>) => {
     const tmpl = (zh as Record<string, string | undefined>)[key]
     if (tmpl === undefined) throw new Error(`missing locale key: ${key}`)
@@ -60,16 +67,9 @@ function buildProps(): Record<string, any> {
     return tmpl.replace(/\{(\w+)\}/g, (_s, k) => String((params as Record<string, unknown>)[k]))
   }
   return {
+    ...actions,
     t,
     useMemorySettings: selectorHook(hooks.memorySettings),
-    setEnabled: face.setEnabled,
-    setExtractionModel: face.setExtractionModel,
-    refreshData: face.refreshData,
-    saveFact: face.saveFact,
-    upsertProfile: face.upsertProfile,
-    deleteProfile: face.deleteProfile,
-    backup: face.backup,
-    restore: face.restore,
     close: () => {},
   }
 }
@@ -81,6 +81,10 @@ describe('MemorySettingsSection render smoke', () => {
       const html = renderToStaticMarkup(createElement(MemorySettingsSection, props as Parameters<typeof MemorySettingsSection>[0]))
       expect(html).toContain('atom-memory-section')
       expect(html).toContain('记忆')
+      // The injection budget renders as a gear slider, named for the system
+      // prompt it sizes.
+      expect(html).toContain('系统提示词注入体积（memory.md）')
+      expect(html).toContain('type="range"')
     }).not.toThrow()
   })
 })

@@ -44,12 +44,20 @@ def upsert_profile(
     source: str = "system_inferred",
     confidence: float = 0.5,
     privacy: str = "private",
+    pinned: Optional[bool] = None,
 ) -> bool:
     """Insert or update a profile row under source-priority rules.
 
     If the key already exists with a *more* authoritative source, the incoming
     (weaker) value is dropped and ``False`` is returned. Otherwise the row is
     written (or upgraded) and ``True`` is returned.
+
+    A **pinned** row (the user's 固定 flag) is frozen against this path
+    entirely: the projection from facts is derived, and a derived write must
+    never update or replace something the user declared fixed. Passing ``pinned``
+    — ``True`` or ``False`` — is the pin owner's write (the settings panel
+    deciding the row's state, including releasing it), and is the only way
+    through; every automatic caller leaves ``pinned`` at ``None``.
 
     Args:
         conn: The SQLite connection.
@@ -60,30 +68,41 @@ def upsert_profile(
         source: Credibility source tag.
         confidence: 0..1 confidence.
         privacy: Privacy tag.
+        pinned: New pin state; ``None`` keeps the row's current state (and means
+            "not pinned" for a brand-new row).
 
     Returns:
         ``True`` if the write was applied, ``False`` if a stronger source
-        already held the key.
+        already held the key or the row is pinned and the caller did not state a
+        pin state.
     """
     existing = conn.execute(
-        "SELECT source FROM user_profile "
+        "SELECT source, pinned FROM user_profile "
         "WHERE user_id = ? AND section = ? AND key = ?",
         (user_id, section, key),
     ).fetchone()
+
+    if existing is not None and bool(existing["pinned"]) and pinned is None:
+        return False
 
     if existing is not None and source_priority(source) < source_priority(
         existing["source"]
     ):
         return False
 
+    if pinned is None:
+        pinned_flag = int(bool(existing["pinned"])) if existing is not None else 0
+    else:
+        pinned_flag = int(bool(pinned))
+
     conn.execute(
         "INSERT INTO user_profile(user_id, section, key, value, source, "
-        "confidence, privacy, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "confidence, privacy, pinned, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(user_id, section, key) DO UPDATE SET "
         "value = excluded.value, source = excluded.source, "
         "confidence = excluded.confidence, privacy = excluded.privacy, "
-        "updated_at = excluded.updated_at",
-        (user_id, section, key, value, source, confidence, privacy, now_ms()),
+        "pinned = excluded.pinned, updated_at = excluded.updated_at",
+        (user_id, section, key, value, source, confidence, privacy, pinned_flag, now_ms()),
     )
     conn.commit()
     return True
@@ -99,7 +118,9 @@ def derive_profile_from_facts(conn: sqlite3.Connection, user_id: str) -> int:
           value='喜欢'/'不喜欢')
 
     Existing rows are updated under source priority, so more recent,
-    more-authoritative facts can override but never get downgraded.
+    more-authoritative facts can override but never get downgraded. Rows the
+    user pinned are skipped outright — this projection is derived, and a fixed
+    row is by definition not the projection's to change.
 
     Args:
         conn: The SQLite connection.
@@ -161,7 +182,7 @@ def profile_md(
         Markdown string, or a notice when the profile is empty.
     """
     rows = conn.execute(
-        "SELECT section, key, value, source FROM user_profile "
+        "SELECT section, key, value, source, pinned FROM user_profile "
         "WHERE user_id = ? ORDER BY section, key",
         (user_id,),
     ).fetchall()
@@ -185,12 +206,18 @@ def profile_md(
 
 
 def _render_row(r) -> str:
-    """Render one profile row, including its key when it is not 'value'."""
+    """Render one profile row, including its key when it is not 'value'.
+
+    Pinned rows carry an explicit 固定 marker: a reader (the model, through the
+    ``memory_user_md`` tool) should know which attributes the user froze against
+    automatic memory, since those are the ones whose stability is deliberate.
+    """
     if r["key"] == "value":
         body = f"**{r['section']}**: {r['value']}"
     else:
         body = f"**{r['section']}**: {r['key']} = {r['value']}"
-    return f"- {body}  *(来源 {r['source']})*"
+    pinned = " · 固定" if r["pinned"] else ""
+    return f"- {body}  *(来源 {r['source']}{pinned})*"
 
 
 def _negation(qualifiers: Optional[str]) -> bool:
