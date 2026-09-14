@@ -42,7 +42,7 @@ pnpm build       # -> lib/index.mjs
 | `nudgeEnabled` | `true` | 周期微调（写路径） |
 | `nudgeIntervalMinutes` | `30` | 微调周期 |
 | `maxRecalledFacts` | `10` | 每次召回给模型的条数上限 |
-| `memoryMdTokens` | `1500` | `memory_memory_md` 工具返回的 memory.md 完整清单 token 上限 |
+| `memoryMdTokens` | `1500` | `memory_memory_md` 工具返回的 memory.md 完整清单 token 上限（设置弹窗走同一预算，但取紧凑深度） |
 | `injectedMemoryMdTokens` | `1500` | 注入系统提示词的紧凑快照 token 上限（与上者分开：注入内容每个请求都要付费） |
 | `contextInjectionEnabled` | `true` | 会话起始冻结快照注入系统提示词 |
 | `rpcTimeoutMs` | `30000` | 单次 RPC 超时 |
@@ -62,7 +62,7 @@ pnpm build       # -> lib/index.mjs
 | 记忆开关 | `enabled` 主开关，实时热切换 | `settings<atom-memory>.enabled` → host `Runtime` |
 | LLM 抽取模型 | 跟随 dsh 默认 / 手动 provider+model | `settings<atom-memory>.extractionModel` → `llm-extractor` |
 | user 画像编辑 | 画像行增删改（`user_explicit` 最高优先级） | `remote.atomMemory.listProfile/upsertProfile/deleteProfile` |
-| 记忆与编辑 | 原子事实列表查看/编辑（SPO/content/type），摘要查看 | `remote.atomMemory.listFacts/editFact` |
+| 记忆与编辑 | 原子事实列表查看/编辑（SPO/content/type），摘要查看；「查看 memory.md」弹窗渲染**与注入系统提示词完全相同**的紧凑视图（按类型分组、不含 `fact_id`） | `remote.atomMemory.listFacts/editFact/memoryMd` |
 | 记忆备份与恢复 | 导出 JSON / 上传导入（replace 语义） | `remote.atomMemory.backup/restore` |
 
 > **浏览器端构建说明**：dsh 宿主对 `exports["./client"]` 是**原样当作浏览器

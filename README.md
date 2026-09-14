@@ -49,9 +49,11 @@ Implemented incrementally behind human review gates — **all four stages done**
 - **Two-depth memory.md + real priority signals (done).** `memory.md` no longer
   renders one flat, recency-ordered list of raw facts for every consumer. The
   injected prompt snapshot is a compact, type-grouped, priority-ordered digest
-  with no `fact_id`; the tool/settings view keeps the full list with
-  `fact_id`. Extraction now supplies `importance`/`confidence` (with a type-rank
-  fallback), which is what makes "most important first" mean anything — see
+  with no `fact_id`; the `memory_memory_md` tool keeps the full list with
+  `fact_id`, and the settings dialog renders the compact digest too, so the
+  panel shows exactly the text the model receives. Extraction now supplies
+  `importance`/`confidence` (with a type-rank fallback), which is what makes
+  "most important first" mean anything — see
   [`memory.md` — one view, two depths](#memorymd--one-view-two-depths).
 
 ## Installation
@@ -133,8 +135,14 @@ from one implementation (`memory_md.generate_memory_md`):
 
 | Depth | Used by | Shape |
 | --- | --- | --- |
-| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** | Facts grouped by memory type, ordered by priority; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; long knowledge bodies truncated to 80 chars; no document title. |
-| `detail=True` (detail) | the `memory_memory_md` tool and the settings dialog | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line. |
+| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** and the settings **"view memory.md" dialog** | Facts grouped by memory type, ordered by priority; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; long knowledge bodies truncated to 80 chars; no document title. |
+| `detail=True` (detail) | the `memory_memory_md` tool | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line. |
+
+Both read paths that a human inspects are therefore *the model's own view*: the
+dialog asks for the compact depth so the panel cannot drift from what the
+prompt carries. The only reason to render `detail=True` is to obtain a
+`fact_id` for locating a fact — which is precisely what the
+`memory_memory_md` tool is for, so the dialog does not need it.
 
 Ordering is **priority first**, not recency. `importance` is only treated as a
 signal when the extractor actually supplied one: the neutral default of `0.5`

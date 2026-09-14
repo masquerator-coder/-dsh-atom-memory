@@ -97,13 +97,22 @@ export class AtomMemoryController extends TypertRemoteService {
     }) as Promise<Record<string, unknown>>
   }
 
-  /** Render the user's `memory.md` (the injected system-prompt memory view). */
+  /**
+   * Render the user's `memory.md` exactly as the host injects it.
+   *
+   * The panel's "view memory.md" modal must show the *same text the model
+   * sees*, so this asks for the compact depth (`detail: false`) the session
+   * system prompt is frozen from: grouped by memory type, priority-ordered, no
+   * `fact_id`. The full list with `fact_id`s stays available through the
+   * `memory_memory_md` tool, whose whole purpose is locating a fact to edit.
+   */
   @Remote
   async memoryMd(args: { user: string; maxTokens?: number }): Promise<string> {
     this.assertReady()
     const result = await this.bridge.call<{ text?: string }>('memory_md', {
       user_id: args.user,
       max_tokens: args.maxTokens ?? 1500,
+      detail: false,
     })
     // `AtomMem.memory_md` returns the markdown string directly; tolerate a
     // wrapped shape in case the Python side ever changes the contract.

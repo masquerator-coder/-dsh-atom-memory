@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Fixed (第五轮：设置弹窗 memory.md 与注入视图对齐)
+- **现象**：重新安装插件并重启 dsh 后，设置界面「查看 memory.md」弹窗内容"仍是旧格式"
+  （带 `# 记忆 (Memory) — global` 标题、每条 `fact_id`、`> 知识内容` 子行）。
+  根因不是部署未生效——已核对部署副本 `dsh/lib` 与源码构建产物**去掉换行差异后逐字符一致**、
+  Python 侧为 editable 安装、运行中的 bridge 也已在跑新代码——而是**弹窗走的是另一条深度**：
+  `AtomMemoryController.memoryMd()` 调 Python `memory_md` 时未传 `detail`，Python 默认
+  `detail=True`，因此弹窗恒定渲染完整清单；紧凑（分组）视图此前只应用在注入路径
+  （`context.ts` 传 `detail: false`）。重装/重启不会改变这一点，因为它是代码路径差异。
+- **修复**：`dsh/src/controller.ts` 的 `memoryMd()` 显式传 `detail: false`，弹窗现在渲染
+  **与注入会话系统提示词完全相同的文本**（按类型分组、按重要度排序、不含 `fact_id`）。
+  完整清单（含 `fact_id`）仍由 `memory_memory_md` 工具提供——它的用途就是拿到
+  `fact_id` 去定位/编辑某条事实，因此弹窗不需要重复承担这个职责。
+- **文案**：`src/client/locales.ts` 中英 `memoryMdHeader`/`memoryMdDesc` 同步为
+  「注入视图」，原文案写的是"完整清单（每条含 fact_id）"，与新行为矛盾。
+- **测试**：新增 `dsh/tests/controller.test.ts`（8 例：`detail: false` 断言、预算默认 1500
+  与透传、包装形状/空载荷容错、bridge 不可用与总开关关闭时拒绝、`listFacts` 默认分页窗口、
+  `editFact` 缺 `fact_id` 时不触达 bridge）。此前 Host controller 无任何单测覆盖。
+  `vitest` 12 文件 85 例全绿，`tsc --noEmit`（含 `tsconfig.client.json`）干净。
+- **文档**：`dsh/README.md`（`memoryMdTokens` 说明、面板功能表）与根 `README.md`
+  （`memory.md` — one view, two depths 表）同步。
+- **部署**：`dsh/lib` 重建（`pnpm build`）并覆盖已安装副本
+  `~/.dsh/profiles/web/node_modules/dsh-atom-memory/dsh/lib/` 的 4 个产物；需重启 dsh
+  使 host Remote 重新加载。
+
 ### Changed (第四轮：memory.md 分层渲染 + 优先级信号)
 - **`memory.md` 拆成两个深度**（一个实现、两处消费），解决"内容多、种类/重点不突出、
   序列号无意义"：
