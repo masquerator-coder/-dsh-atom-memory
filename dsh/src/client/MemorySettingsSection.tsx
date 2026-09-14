@@ -66,11 +66,33 @@ export type MemorySettingsSectionProps =
 /** A locale-typed translate used by the rows/subcomponents. */
 type RowTranslate = (key: MemorySettingsLocaleKey, params?: Record<string, unknown>) => string
 
+/** Monotonic source of client-side draft-row identities. */
+let draftSeq = 0
+
+/** @returns a fresh, process-unique draft-row identity. */
+const nextDraftUid = (): number => (draftSeq += 1)
+
 /** Modal state of a fact-editing draft row. */
-interface FactsDraft extends FactEditRow {}
+interface FactsDraft extends FactEditRow {
+  /**
+   * Stable React key for the row. Deliberately NOT derived from cell content:
+   * a content-derived key changes on every keystroke, which remounts the `<tr>`
+   * and destroys the focused `<input>` (focus falls back to `<body>` and the
+   * user can only ever type one character at a time).
+   */
+  uid: number
+}
 
 /** Modal state of a profile-editing draft row. */
-interface ProfileDraft extends ProfileEditRow {}
+interface ProfileDraft extends ProfileEditRow {
+  /** Stable React key for the row — see {@link FactsDraft.uid}. */
+  uid: number
+}
+
+/** Strip the client-only render identity before handing drafts to `onSave`. */
+function withoutUid<T extends { uid: number }>(rows: T[]): Omit<T, 'uid'>[] {
+  return rows.map(({ uid: _uid, ...rest }) => rest)
+}
 
 export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   const { t } = props
@@ -406,6 +428,7 @@ function FactsEditorModal(props: {
   const { t, initial, onSave, onClose } = props
   const [rows, setRows] = useState<FactsDraft[]>(() =>
     initial.map(f => ({
+      uid: nextDraftUid(),
       fact_id: f.fact_id, subject: f.subject, predicate: f.predicate,
       object: f.object, content: f.content ?? '', type: f.type, deleted: false,
     })),
@@ -417,12 +440,13 @@ function FactsEditorModal(props: {
 
   const addRow = () =>
     setRows(prev => [...prev, {
+      uid: nextDraftUid(),
       fact_id: '', subject: '', predicate: '', object: '', content: '', deleted: false,
     }])
 
   const save = () => {
     setSaving(true)
-    void Promise.resolve(onSave(rows)).finally(() => { setSaving(false); onClose() })
+    void Promise.resolve(onSave(withoutUid(rows))).finally(() => { setSaving(false); onClose() })
   }
 
   const footer = (
@@ -448,7 +472,7 @@ function FactsEditorModal(props: {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={row.fact_id || `new-${i}`} style={row.deleted ? { opacity: 0.45 } : undefined}>
+            <tr key={row.uid} style={row.deleted ? { opacity: 0.45 } : undefined}>
               <td><input value={row.subject} disabled={row.deleted} placeholder={t('newRowPlaceholder')} onChange={(e) => setRow(i, { subject: e.currentTarget.value })} /></td>
               <td><input value={row.predicate} disabled={row.deleted} onChange={(e) => setRow(i, { predicate: e.currentTarget.value })} /></td>
               <td><input value={row.object} disabled={row.deleted} onChange={(e) => setRow(i, { object: e.currentTarget.value })} /></td>
@@ -482,18 +506,21 @@ function ProfileEditorModal(props: {
 }) {
   const { t, initial, onSave, onClose } = props
   const [rows, setRows] = useState<ProfileDraft[]>(() =>
-    initial.map(r => ({ section: r.section, key: r.key, value: r.value, deleted: false })),
+    initial.map(r => ({
+      uid: nextDraftUid(), section: r.section, key: r.key, value: r.value, deleted: false,
+    })),
   )
   const [saving, setSaving] = useState(false)
 
   const setRow = (index: number, patch: Partial<ProfileDraft>) =>
     setRows(prev => prev.map((r, i) => i === index ? { ...r, ...patch } : r))
 
-  const addRow = () => setRows(prev => [...prev, { section: '', key: '', value: '', deleted: false }])
+  const addRow = () =>
+    setRows(prev => [...prev, { uid: nextDraftUid(), section: '', key: '', value: '', deleted: false }])
 
   const save = () => {
     setSaving(true)
-    void Promise.resolve(onSave(rows)).finally(() => { setSaving(false); onClose() })
+    void Promise.resolve(onSave(withoutUid(rows))).finally(() => { setSaving(false); onClose() })
   }
 
   const footer = (
@@ -518,7 +545,7 @@ function ProfileEditorModal(props: {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={`${row.section}:${row.key}:${i}`} style={row.deleted ? { opacity: 0.45 } : undefined}>
+            <tr key={row.uid} style={row.deleted ? { opacity: 0.45 } : undefined}>
               <td><input value={row.section} disabled={row.deleted} onChange={(e) => setRow(i, { section: e.currentTarget.value })} /></td>
               <td><input value={row.key} disabled={row.deleted} onChange={(e) => setRow(i, { key: e.currentTarget.value })} /></td>
               <td><input value={row.value} disabled={row.deleted} onChange={(e) => setRow(i, { value: e.currentTarget.value })} /></td>

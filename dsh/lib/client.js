@@ -506,6 +506,14 @@ window.__ModuleLoader__.load({
 			editor: "atom-memory-editor",
 			editorRowActions: "atom-memory-editor-row-actions"
 		};
+		/** Monotonic source of client-side draft-row identities. */
+		let draftSeq = 0;
+		/** @returns a fresh, process-unique draft-row identity. */
+		const nextDraftUid = () => draftSeq += 1;
+		/** Strip the client-only render identity before handing drafts to `onSave`. */
+		function withoutUid(rows) {
+			return rows.map(({ uid: _uid, ...rest }) => rest);
+		}
 		function MemorySettingsSection(props) {
 			const { t } = props;
 			const state = props.useMemorySettings((snapshot) => snapshot);
@@ -878,6 +886,7 @@ window.__ModuleLoader__.load({
 		function FactsEditorModal(props) {
 			const { t, initial, onSave, onClose } = props;
 			const [rows, setRows] = (0, react.useState)(() => initial.map((f) => ({
+				uid: nextDraftUid(),
 				fact_id: f.fact_id,
 				subject: f.subject,
 				predicate: f.predicate,
@@ -892,6 +901,7 @@ window.__ModuleLoader__.load({
 				...patch
 			} : r));
 			const addRow = () => setRows((prev) => [...prev, {
+				uid: nextDraftUid(),
 				fact_id: "",
 				subject: "",
 				predicate: "",
@@ -901,7 +911,7 @@ window.__ModuleLoader__.load({
 			}]);
 			const save = () => {
 				setSaving(true);
-				Promise.resolve(onSave(rows)).finally(() => {
+				Promise.resolve(onSave(withoutUid(rows))).finally(() => {
 					setSaving(false);
 					onClose();
 				});
@@ -966,7 +976,7 @@ window.__ModuleLoader__.load({
 								})
 							}) })
 						]
-					}, row.fact_id || `new-${i}`)) })]
+					}, row.uid)) })]
 				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 					type: "button",
 					className: css.add,
@@ -980,6 +990,7 @@ window.__ModuleLoader__.load({
 		function ProfileEditorModal(props) {
 			const { t, initial, onSave, onClose } = props;
 			const [rows, setRows] = (0, react.useState)(() => initial.map((r) => ({
+				uid: nextDraftUid(),
 				section: r.section,
 				key: r.key,
 				value: r.value,
@@ -991,6 +1002,7 @@ window.__ModuleLoader__.load({
 				...patch
 			} : r));
 			const addRow = () => setRows((prev) => [...prev, {
+				uid: nextDraftUid(),
 				section: "",
 				key: "",
 				value: "",
@@ -998,7 +1010,7 @@ window.__ModuleLoader__.load({
 			}]);
 			const save = () => {
 				setSaving(true);
-				Promise.resolve(onSave(rows)).finally(() => {
+				Promise.resolve(onSave(withoutUid(rows))).finally(() => {
 					setSaving(false);
 					onClose();
 				});
@@ -1056,7 +1068,7 @@ window.__ModuleLoader__.load({
 								})
 							}) })
 						]
-					}, `${row.section}:${row.key}:${i}`)) })]
+					}, row.uid)) })]
 				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 					type: "button",
 					className: css.add,

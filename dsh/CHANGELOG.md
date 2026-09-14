@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed (第六轮：画像编辑每输入一个字符就失去焦点)
+- **现象**：设置界面「编辑画像」弹窗里，在「分组 / 键 / 值」任一单元格输入时，
+  每敲一个字符输入框就失焦，无法连续输入（只能一次一个字符、且需重新点击）。
+- **根因**：`src/client/MemorySettingsSection.tsx` 的画像表格用**单元格内容**当 React key
+  —— `key={`${row.section}:${row.key}:${i}`}`。受控输入每敲一个字符都会 `setRows`，
+  `section`/`key` 一变 key 就变，React 判定为**新行**：卸载旧 `<tr>`、挂载新 `<tr>`，
+  被聚焦的 `<input>` DOM 节点随之销毁，焦点回落到 `<body>`，下一个字符自然丢失。
+  这也是为什么同一份代码里 **facts 表没事**（它用 `fact_id`，新增行用 `new-${i}`，
+  两者都与用户输入无关），缺陷只出现在画像表——与"只有画像编辑有问题"的现场一致。
+  同类错误写法在受控表格里是禁用项：**key 绝不能由被编辑的内容派生**。
+- **修复**：给草稿行引入与内容无关的稳定标识 `uid`（模块级单调计数器
+  `nextDraftUid()`），`<tr key={row.uid}>`。`uid` 只服务于渲染，保存前经
+  `withoutUid()` 剥离，因此 `saveAllProfile` / `saveAllFacts` 的线上载荷形状不变。
+  facts 表一并对齐到 `uid`（原 `new-${i}` 是索引派生，插入行即会串位），
+  两个表格编辑器保持同一约定，避免日后互相复制时把缺陷带回来。
+- **测试**：`tests/section-render.client.test.ts` 新增（含 `within(row)` 定位单元格 +
+  `typeInto()` 逐字符输入助手）：逐字符输入后断言 **DOM 元素同一性**（`document.activeElement`
+  仍是同一个 `<input>`）与**文本累积**——行被重挂载时焦点落到 `<body>`，断言立刻失败。
+  修复前该用例**确实红**（1 failed / 6 passed），仅画像表失败、facts 表通过，
+  与根因推断完全吻合；修复后 `vitest` 12 文件 88 例全绿，`tsc --noEmit`
+  （含 `tsconfig.client.json`）干净。
+- **部署**：`pnpm build` 重建 `dsh/lib`，覆盖已安装副本
+  `~/.dsh/profiles/web/node_modules/dsh-atom-memory/dsh/lib/` 的 4 个产物
+  （去掉换行差异后逐字符一致）；客户端 bundle 变更需刷新设置页面（或重启 dsh）生效。
+
 ### Fixed (第五轮：设置弹窗 memory.md 与注入视图对齐)
 - **现象**：重新安装插件并重启 dsh 后，设置界面「查看 memory.md」弹窗内容"仍是旧格式"
   （带 `# 记忆 (Memory) — global` 标题、每条 `fact_id`、`> 知识内容` 子行）。
