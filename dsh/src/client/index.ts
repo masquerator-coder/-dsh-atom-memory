@@ -39,10 +39,21 @@ export async function apply(ctx: Context): Promise<() => void> {
   // assembly namespaces, so the browser has no auto-generated descriptors for it.
   // Mount them here, then hand the namespace service to the controller.
   const disposeRemote = await ctx.remote.$mount(ATOM_MEMORY_REMOTE)
+  // Resolve the freshly-mounted namespace through `ctx.get` — the inject-free
+  // read. `ctx.remote.atomMemory` property access is gated on the `remote.atomMemory`
+  // inject entry, which is not (and cannot be) statically declared because the
+  // namespace is mounted dynamically inside this same apply().
+  const memoryRemote = ctx.get('remote.atomMemory') as unknown
+  if (memoryRemote === undefined) {
+    // Never fail the loader entry (that blocks dsh startup): degrade the panel
+    // to a surfaced error instead. The settings section still renders and the
+    // dynamic-data calls will report the missing namespace through `lastError`.
+    ctx.logger ? ctx.logger.warn('[dsh-atom-memory] remote.atomMemory was not provided after mount; memory panel remote calls disabled') : undefined
+  }
 
   const controller = new MemorySettingsController(
     ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }),
-    ctx.remote.atomMemory as unknown,
+    memoryRemote,
   )
   ctx.effect(() => () => { controller.dispose() }, 'atom-memory: controller')
 

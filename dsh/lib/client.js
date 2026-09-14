@@ -658,7 +658,9 @@ window.__ModuleLoader__.load({
 			const t = ctx.locale.bind(LOCALE_NS);
 			ctx.effect(() => ctx.locale.register(LOCALE_NS, dicts), "atom-memory: section dictionaries");
 			const disposeRemote = await ctx.remote.$mount(ATOM_MEMORY_REMOTE);
-			const controller = new MemorySettingsController(ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }), ctx.remote.atomMemory);
+			const memoryRemote = ctx.get("remote.atomMemory");
+			if (memoryRemote === void 0) ctx.logger && ctx.logger.warn("[dsh-atom-memory] remote.atomMemory was not provided after mount; memory panel remote calls disabled");
+			const controller = new MemorySettingsController(ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }), memoryRemote);
 			ctx.effect(() => () => {
 				controller.dispose();
 			}, "atom-memory: controller");
