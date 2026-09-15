@@ -24,3 +24,7 @@ htmlcov/
 
 # Generated architecture-diagram artifacts (archify skill output)
 archify/
+
+# Stray agent session transcripts (must never be committed)
+session.v3.jsonl
+*.jsonl.zstd

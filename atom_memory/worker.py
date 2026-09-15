@@ -8,6 +8,11 @@ backoff and marks permanently-failing tasks as ``dead`` (recording an
 Stage 2 implements the ``extract`` handler: extract candidates from the raw
 utterance, run the validation chain, then persist accepted facts into the
 ``facts``, ``facts_fts`` and ``facts_vec`` tables.
+
+The worker also owns the implicit half of the reuse-reinforcement loop: when a
+candidate is rejected as ``idempotent`` the user has re-stated a claim already
+stored, which is recorded as a reinforcement event (see
+:mod:`~atom_memory.reinforce`). Retrieval hits are deliberately not a signal.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from typing import Callable, List, Optional
 
 from .db import now_ms
 from .models import AtomicFact, FactCandidate, default_importance
+from .reinforce import KIND_USER_RESTATED, record_reinforcement
 from .retriever import segment_text
 from .summarizer import SCOPE_GLOBAL, mark_stale, try_rebuild
 from .validator import validate
@@ -310,6 +316,7 @@ class Worker:
             return
 
         persisted = False
+        reinforced = False
         for candidate in candidates:
             result = validate(
                 candidate, self.conn, privacy_filter=self.privacy_filter
@@ -321,13 +328,47 @@ class Worker:
                     "Candidate %s rejected (%s): %s",
                     candidate.candidate_id, result.kind, result.reason,
                 )
+                # An idempotent rejection means the user re-stated a claim we
+                # already hold: that is the cleanest reuse evidence there is, and
+                # it costs nothing extra to observe (see reinforce.py).
+                if result.kind == "idempotent" and result.suppressed:
+                    reinforced |= self._reinforce(
+                        result.suppressed, user_id, session_id,
+                        KIND_USER_RESTATED,
+                    )
                 continue
             await self._persist_fact(candidate, trace_id=None)
             persisted = True
 
         self._set_candidate_status(candidate_id, CAND_STATUS_APPLIED)
-        if persisted:
+        if persisted or reinforced:
             self._after_mutation(user_id)
+
+    def _reinforce(
+        self, fact_id: str, user_id: str, session_id: str, kind: str
+    ) -> bool:
+        """Record one reinforcement event, never letting it break the task.
+
+        Reinforcement is a ranking refinement: a failure to record it must not
+        fail the extract/persist task that produced it.
+
+        Args:
+            fact_id: The fact being strengthened.
+            user_id: Owner of the fact.
+            session_id: Session the evidence came from.
+            kind: One of the ``KIND_*`` constants (see
+                :mod:`~atom_memory.reinforce`).
+
+        Returns:
+            ``True`` when the aggregate actually changed.
+        """
+        try:
+            return record_reinforcement(
+                self.conn, fact_id, user_id, session_id, kind
+            ) is not None
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Failed to reinforce fact %s (%s)", fact_id, kind)
+            return False
 
     async def _process_persist_pre(self, payload: dict) -> None:
         """Persist pre-extracted candidates (e.g. from the dsh-side LLM extractor).
@@ -351,6 +392,7 @@ class Worker:
         candidates = payload.get("candidates") or []
 
         persisted = False
+        reinforced = False
         for d in candidates:
             cand = _candidate_from_rpc_dict(d, user_id, session_id, turn_id)
             result = validate(cand, self.conn, privacy_filter=self.privacy_filter)
@@ -359,12 +401,17 @@ class Worker:
                     "Pre-extracted candidate %s rejected (%s): %s",
                     cand.candidate_id, result.kind, result.reason,
                 )
+                if result.kind == "idempotent" and result.suppressed:
+                    reinforced |= self._reinforce(
+                        result.suppressed, user_id, session_id,
+                        KIND_USER_RESTATED,
+                    )
                 continue
             await self._persist_fact(cand, trace_id=None)
             persisted = True
 
         self._set_candidate_status(candidate_id, CAND_STATUS_APPLIED)
-        if persisted:
+        if persisted or reinforced:
             self._after_mutation(user_id)
 
     def _set_candidate_status(self, candidate_id: str, status: str) -> None:

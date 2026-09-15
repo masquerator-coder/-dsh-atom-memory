@@ -4,9 +4,25 @@ Implements the recall half of the memory loop (spec 8.2 / 8.3):
 
     retrieval  = FTS5 (lexical, jieba-segmented query) ⊕ vec0 (semantic KNN)
     fusion     = Reciprocal Rank Fusion (RRF)
-    re-rank    = 0.4·rrf_norm + 0.2·importance_norm + 0.2·recency_norm
+    re-rank    = 0.4·rrf_norm + 0.2·effective_importance + 0.2·recency_norm
                  + 0.2·trust_score
     trust      = 0.6·confidence + 0.4·source_credibility
+
+The importance term is the fact's **effective** importance: the value written at
+extraction time plus the saturating reuse bonus from
+:mod:`~atom_memory.reinforce`, with the stored reinforcement snapshot decayed to
+the current instant (``reinforce.adjust``). Reuse therefore strengthens ranking,
+but bounded and with a diminishing marginal effect — and it fades again if the
+fact stops being used. It is used on its absolute 0..1 scale rather than min-max
+normalised, so the reinforcement ceiling is a real ceiling instead of a per-query
+rank.
+
+Recency is likewise a half-life decay rather than a min-max rescale of the
+candidate ages: ages are shifted so the newest candidate is the reference
+(:func:`~atom_memory.db.age_offset`) and then decayed
+(:func:`~atom_memory.db.recency_credit`). It is measured from ``last_used_at``
+where the fact has been used, so a long-lived fact that is still in active use is
+not aged out for being old. See :data:`RECENCY_HALF_LIFE_DAYS` for the tuning.
 
 All lookups are hard-scoped to ``user_id`` and only ``active`` facts are
 considered.
@@ -19,7 +35,8 @@ import logging
 import sqlite3
 from typing import Callable, Dict, List, Optional, Sequence
 
-from .db import now_ms
+from .db import MS_PER_DAY, age_offset, now_ms, recency_credit
+from .reinforce import adjust, effective_importance
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +59,32 @@ W_TRUST = 0.2
 
 T_TRUST_CONFIDENCE = 0.6
 T_TRUST_SOURCE = 0.4
+
+# -- recency ------------------------------------------------------------------
+#
+# Age at which a fact's recency credit halves, and how far back the relative
+# shift may reach. See db.age_offset / db.recency_credit for why recency is a
+# shifted exponential decay rather than a per-query min-max rescale of ages.
+#
+# 30 days is deliberately much longer than memory.md's 14: that view answers
+# "what is going on right now" for a session-start snapshot, while this one
+# answers "which of the things matching *this query* is most current", already
+# gated by relevance — so recency here is a tie-breaker among relevant facts, not
+# a selector.
+RECENCY_HALF_LIFE_DAYS = 30.0
+
+# Cap on the relative shift. It must stay well above the half-life, or the cap
+# stops being a backstop and becomes the dominant shaper: at window == half-life
+# every candidate more than one half-life older than the newest is flattened onto
+# the same credit (0.5), and genuinely different ages stop being distinguished.
+# Three half-lives keeps ~3 bits of resolution across the plausible spread.
+RECENCY_REFERENCE_WINDOW_DAYS = 3 * RECENCY_HALF_LIFE_DAYS
+
+# A fact's age for recency purposes is measured from the last time it was *used*
+# when it has been used, falling back to creation. A long-lived fact that is
+# still in active use must not be aged out merely for being old, and reuse is
+# what makes it current — the same reason reinforce.py prefers last_used_at.
+_AGE_AT_SQL = "COALESCE(last_used_at, created_at)"
 
 
 def rrf_merge(
@@ -176,7 +219,8 @@ class Retriever:
         placeholders = ",".join("?" for _ in fact_ids)
         rows = self.conn.execute(
             f"SELECT fact_id, subject, predicate, object, confidence, "
-            f"importance, source_type, status, created_at, type, content "
+            f"importance, source_type, status, created_at, type, content, "
+            f"reinforce_count, last_used_at, {_AGE_AT_SQL} AS age_at "
             f"FROM facts WHERE user_id = ? AND fact_id IN ({placeholders})",
             [user_id, *fact_ids],
         ).fetchall()
@@ -193,13 +237,54 @@ class Retriever:
         if not facts:
             return []
 
+        now = now_ms()
         rrf_vals = [rrf_scores.get(f["fact_id"], 0.0) for f in facts]
-        imp_vals = [float(f["importance"]) for f in facts]
-        age_vals = [now_ms() - int(f["created_at"] or 0) for f in facts]
+        # Reuse feeds ranking through the *effective* importance (base plus the
+        # saturating reinforcement bonus); the stored `importance` stays the
+        # extractor's original judgement so it can always be reported as-is.
+        #
+        # The stored reinforcement columns are a *snapshot* taken at
+        # last_used_at, so they are decayed to `now` here. Reading them raw would
+        # keep a long-unused fact at its year-old strength forever.
+        counts = [
+            adjust(
+                float(f.get("reinforce_count") or 0.0), f.get("last_used_at"), now
+            )
+            for f in facts
+        ]
+        eff_vals = [
+            effective_importance(float(f.get("importance") or 0.0), count)
+            for f, count in zip(facts, counts)
+        ]
+        age_ms = [
+            max(0.0, float(now - int(f.get("age_at") or f["created_at"] or 0)))
+            for f in facts
+        ]
+        # Recency is relative to the newest candidate, with the shift capped so
+        # an entirely-old result set still spreads its credits. See
+        # db.age_offset for why neither a raw wall-clock age nor an uncapped
+        # shift to zero works, and RECENCY_REFERENCE_WINDOW_DAYS for why the cap
+        # must stay well above the half-life.
+        newest_age = min(age_ms)
+        window_ms = RECENCY_REFERENCE_WINDOW_DAYS * MS_PER_DAY
+        half_life_ms = RECENCY_HALF_LIFE_DAYS * MS_PER_DAY
 
         rrf_norm = _minmax(rrf_vals)
-        imp_norm = _minmax(imp_vals)
-        recency_norm = _minmax([-a for a in age_vals])  # older -> smaller
+        # Absolute, *not* min-max normalised. Min-max rescales the candidate set
+        # so the best fact always scores exactly 1.0 and the worst 0.0, which
+        # makes the importance term's real magnitude depend on who else happened
+        # to be retrieved and lets a negligible relevance gap between two
+        # candidates stretch across the full 0.2 weight — enough to cancel the
+        # entire reinforcement budget (A_MAX = 0.5 -> at most 0.1 of the final
+        # score). The value is already a meaningful 0..1 measure, so the
+        # reinforcement ceiling is a real ceiling instead of a per-query rank.
+        imp_norm = eff_vals
+        recency_norm = [
+            recency_credit(
+                age_offset(age, newest_age, window_ms), half_life_ms, 0.0
+            )
+            for age in age_ms
+        ]
 
         ranked: List[dict] = []
         for i, fact in enumerate(facts):
@@ -215,6 +300,11 @@ class Retriever:
                 + W_TRUST * trust
             )
             item = dict(fact)
+            item["effective_importance"] = round(eff_vals[i], 6)
+            # The decayed reuse count the bonus above was derived from. The raw
+            # column is a snapshot from last_used_at and would disagree with it.
+            item["strength"] = round(counts[i], 6)
+            item["recency"] = round(recency_norm[i], 6)
             item["final_score"] = round(final, 4)
             ranked.append(item)
 

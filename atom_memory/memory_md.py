@@ -40,6 +40,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from .db import now_ms, recency_credit
 from .models import (
     NEUTRAL_SCORE,
     PRED_EVENT,
@@ -47,6 +48,7 @@ from .models import (
     default_importance,
 )
 from .retriever import estimate_tokens
+from .reinforce import adjust, effective_importance
 from .validator import MULTI_VALUED_PREDICATES
 
 # Maximum characters of a rendered *content line* in the compact digest.
@@ -91,12 +93,25 @@ _MAX_DETAIL_FIELD_CHARS = 120
 _IMPORTANCE_WEIGHT = 0.7
 _RECENCY_WEIGHT = 0.3
 
-# Age at which a fact's recency credit halves. Age is measured *relative to the
-# newest fact in the set* rather than against the wall clock, so the ranking is
+# Age at which a fact's recency credit halves, measured *relative to the newest
+# fact in the set* rather than against the wall clock, so the ranking is
 # deterministic (no clock dependency, no test flakiness) and still means what it
 # should: "the newest thing I know" always gets full recency credit, and
 # everything else is discounted by how much older it is than that.
-_RECENCY_HALF_LIFE_SECONDS = 14 * 24 * 60 * 60
+#
+# The name says "seconds" but the value is in **milliseconds**, matching the
+# timestamps it divides (every `*_at` column is ms). It is spelled that way for
+# backward compatibility; db.recency_credit is unit-agnostic and takes whatever
+# the caller passes, so the only thing that must hold is that this and the age
+# share a unit.
+#
+# The anchor deliberately differs from the retriever's: this view renders one
+# user's whole memory, so the newest memory is exactly the right definition of
+# "now". The retriever sees a handful of query-matched candidates and caps its
+# reference offset with a window instead, because one very fresh candidate would
+# otherwise make every other candidate look ancient. Only the anchor and the
+# half-life differ; the decay shape is shared (db.recency_credit).
+_RECENCY_HALF_LIFE_SECONDS = 14 * 24 * 60 * 60 * 1000
 
 # Section titles in rendering order. Sections present in the data always render
 # (even when a budget only allows a heading), so the reader can see *which kinds*
@@ -164,11 +179,12 @@ def _load_active_facts(conn: sqlite3.Connection, user_id: str) -> List[dict]:
     """Load active facts for a user, normalising the fields the views need."""
     rows = conn.execute(
         "SELECT fact_id, subject, predicate, object, qualifiers, confidence, "
-        "importance, type, content, created_at FROM facts "
-        "WHERE user_id = ? AND status = 'active'",
+        "importance, type, content, created_at, reinforce_count, last_used_at "
+        "FROM facts WHERE user_id = ? AND status = 'active'",
         (user_id,),
     ).fetchall()
 
+    at = now_ms()
     facts: List[dict] = []
     for row in rows:
         fact = dict(row)
@@ -177,7 +193,18 @@ def _load_active_facts(conn: sqlite3.Connection, user_id: str) -> List[dict]:
         # ``importance`` is only a signal when the extractor supplied one; the
         # neutral default means "unknown" and defers to the type's rank.
         stated = float(fact["importance"] or 0.0)
-        fact["rank"] = _effective_rank(memory_type, stated)
+        # Reuse then strengthens that rank, so a fact the user keeps returning to
+        # outranks an equally-stated one they never touch. The reinforcement
+        # snapshot is decayed to now, exactly as retrieval does — reading the
+        # columns raw would keep a long-unused fact at its old strength.
+        fact["rank"] = effective_importance(
+            _effective_rank(memory_type, stated),
+            adjust(
+                float(fact.get("reinforce_count") or 0.0),
+                fact.get("last_used_at"),
+                at,
+            ),
+        )
         facts.append(fact)
     return facts
 
@@ -217,16 +244,28 @@ def _has_signal(value: float) -> bool:
 def _recency_score(created_at: int, newest_created_at: int) -> float:
     """Return the 0..1 recency credit of a fact, newest-first.
 
+    A thin wrapper over the shared decay in
+    :func:`~atom_memory.db.recency_credit` so this view and the retriever cannot
+    drift apart on the *shape* — both are exponential decay with a half-life.
+    They differ only in their reference anchor and half-life, which is exactly
+    the knob that should differ.
+
     Args:
-        created_at: The fact's creation timestamp.
-        newest_created_at: The newest timestamp in the same fact set.
+        created_at: The fact's creation timestamp (ms).
+        newest_created_at: The newest timestamp in the same fact set; this view
+            treats it as "now" rather than the wall clock, so the ranking is
+            deterministic.
 
     Returns:
         ``1.0`` for the newest fact, halving per
-        :data:`_RECENCY_HALF_LIFE_SECONDS` of age relative to it.
+        :data:`_RECENCY_HALF_LIFE_SECONDS` (which is in ms; see its comment) of
+        age relative to it.
     """
-    age = max(0, int(newest_created_at) - int(created_at))
-    return 0.5 ** (age / _RECENCY_HALF_LIFE_SECONDS)
+    age_ms = max(0, int(newest_created_at) - int(created_at))
+    # The newest fact scores 1.0: here the reference *is* the newest timestamp,
+    # with no window cap, because the set is one user's whole memory rather than
+    # the handful of query-matched candidates the retriever sees.
+    return recency_credit(age_ms, float(_RECENCY_HALF_LIFE_SECONDS), 0.0)
 
 
 def _blend(rank: float, recency: float) -> float:

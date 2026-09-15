@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from atom_memory.config import MemConfig
 from atom_memory.db import SCHEMA_VERSION, connect_for_tests, open_db
 from atom_memory.embedder import serialize_float32
@@ -29,6 +31,8 @@ def test_open_db_creates_all_tables(tmp_path):
         "task_queue",
         "facts_fts",
         "facts_vec",
+        # migration 005: the append-only reuse evidence log.
+        "fact_reinforcements",
     }
     assert expected.issubset(names)
 
@@ -145,6 +149,8 @@ def test_all_fact_columns_exist(tmp_path):
         "qualifiers", "confidence", "importance", "privacy", "source_type",
         "status", "superseded_by", "observed_at", "created_at", "trace_id",
         "version", "type", "content",
+        # migration 005: the reuse-reinforcement aggregate.
+        "reinforce_count", "last_used_at", "last_seen_at",
     }
     assert expected.issubset(cols)
 
@@ -364,6 +370,10 @@ def test_v3_database_upgrades_to_v4_unpinned(tmp_path):
 
     Migration 004 must retro-fit rows that predate the pin: an existing
     deployment's profile is live and editable, never silently frozen.
+
+    The fixture carries a ``facts`` table because a real v3 deployment has one
+    (migration 001 creates it) and later migrations alter it — see migration
+    005, which adds the reuse-reinforcement columns.
     """
     import sqlite3
 
@@ -371,6 +381,22 @@ def test_v3_database_upgrades_to_v4_unpinned(tmp_path):
     raw = sqlite3.connect(path)
     raw.executescript(
         """
+        CREATE TABLE facts (
+            fact_id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, subject TEXT NOT NULL,
+            predicate TEXT NOT NULL, object TEXT NOT NULL, qualifiers TEXT,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            importance REAL NOT NULL DEFAULT 0.5,
+            privacy TEXT NOT NULL DEFAULT 'private',
+            source_type TEXT NOT NULL DEFAULT 'user_explicit',
+            status TEXT NOT NULL DEFAULT 'active', superseded_by TEXT,
+            observed_at INTEGER NOT NULL, created_at INTEGER NOT NULL,
+            trace_id TEXT, version INTEGER NOT NULL DEFAULT 1,
+            type TEXT NOT NULL DEFAULT 'semantic', content TEXT
+        );
+        INSERT INTO facts(fact_id, user_id, session_id, subject, predicate,
+            object, observed_at, created_at)
+            VALUES ('f1','u1','s1','用户','偏好','黑咖啡',1000,1000);
         CREATE TABLE user_profile (
             user_id TEXT NOT NULL, section TEXT NOT NULL, key TEXT NOT NULL,
             value TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'system_inferred',
@@ -393,6 +419,69 @@ def test_v3_database_upgrades_to_v4_unpinned(tmp_path):
         row = conn.execute("SELECT value, pinned FROM user_profile").fetchone()
         assert row["value"] == "工程师"
         assert row["pinned"] == 0
+    finally:
+        conn.close()
+
+
+def test_v4_database_upgrades_to_v5_with_zero_reinforcement(tmp_path):
+    """A database at user_version=4 gains the reinforcement columns.
+
+    Migration 005 must retro-fit existing facts as *un-reinforced*: their
+    effective importance stays exactly the importance written at extraction
+    time, so upgrading never silently re-ranks an existing memory.
+    """
+    import sqlite3
+
+    path = str(tmp_path / "legacy_v4.db")
+    raw = sqlite3.connect(path)
+    raw.executescript(
+        """
+        CREATE TABLE facts (
+            fact_id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, subject TEXT NOT NULL,
+            predicate TEXT NOT NULL, object TEXT NOT NULL, qualifiers TEXT,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            importance REAL NOT NULL DEFAULT 0.5,
+            privacy TEXT NOT NULL DEFAULT 'private',
+            source_type TEXT NOT NULL DEFAULT 'user_explicit',
+            status TEXT NOT NULL DEFAULT 'active', superseded_by TEXT,
+            observed_at INTEGER NOT NULL, created_at INTEGER NOT NULL,
+            trace_id TEXT, version INTEGER NOT NULL DEFAULT 1,
+            type TEXT NOT NULL DEFAULT 'semantic', content TEXT
+        );
+        INSERT INTO facts(fact_id, user_id, session_id, subject, predicate,
+            object, importance, observed_at, created_at)
+            VALUES ('f1','u1','s1','用户','偏好','黑咖啡',0.75,1000,1000);
+        CREATE TABLE user_profile (
+            user_id TEXT NOT NULL, section TEXT NOT NULL, key TEXT NOT NULL,
+            value TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'system_inferred',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            privacy TEXT NOT NULL DEFAULT 'private',
+            updated_at INTEGER NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, section, key)
+        );
+        PRAGMA user_version = 4;
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    conn = open_db(MemConfig(db_path=path))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        row = conn.execute(
+            "SELECT importance, reinforce_count, last_used_at, last_seen_at "
+            "FROM facts WHERE fact_id = 'f1'"
+        ).fetchone()
+        assert row["importance"] == pytest.approx(0.75)
+        assert row["reinforce_count"] == 0.0
+        assert row["last_used_at"] is None
+        assert row["last_seen_at"] is None
+        # The evidence log exists and starts empty.
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM fact_reinforcements"
+        ).fetchone()["n"] == 0
     finally:
         conn.close()
 

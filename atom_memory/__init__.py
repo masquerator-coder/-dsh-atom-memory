@@ -26,6 +26,14 @@ from .models import (
     Summary,
     ValidationResult,
 )
+from .reinforce import (
+    KIND_APPLIED,
+    KIND_RETRIEVED_ONLY,
+    KIND_USER_CONFIRMED,
+    KIND_USER_RESTATED,
+    effective_importance,
+    reinforce_bonus,
+)
 
 __all__ = [
     "AtomMem",
@@ -47,6 +55,12 @@ __all__ = [
     "TYPE_LESSON",
     "SUMMARY_LIGHT_KNOWLEDGE",
     "PRED_EVENT",
+    "KIND_USER_CONFIRMED",
+    "KIND_USER_RESTATED",
+    "KIND_APPLIED",
+    "KIND_RETRIEVED_ONLY",
+    "reinforce_bonus",
+    "effective_importance",
 ]
 
 __version__ = "0.1.0"

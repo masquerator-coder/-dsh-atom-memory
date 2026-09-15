@@ -66,6 +66,16 @@ Implemented incrementally behind human review gates — **all four stages done**
   through backup/restore (a restore cannot silently unfreeze it), and `user_md`
   marks fixed rows so a reader can tell which stability is deliberate (schema v4,
   migration `004_init.sql`).
+- **Reuse reinforcement (done).** Reuse now strengthens a memory, so what the
+  user keeps coming back to outranks what was merely written once. Facts carry a
+  reuse aggregate (`reinforce_count` / `last_used_at`, schema v5, migration
+  `005_init.sql`) fed by an append-only `fact_reinforcements` evidence log; the
+  score is the extractor's importance plus a **saturating** bonus
+  (`A_MAX · (1 − e^(−λn))`), which is locally linear — the first reuses each add
+  a comparable amount — yet bounded and concave, so each further reuse counts
+  strictly less. Strength also **decays** (75-day half-life) and is re-earned, so
+  a memory that stops being used fades on its own. See
+  [Reuse reinforcement](#reuse-reinforcement).
 
 ## Installation
 
@@ -274,11 +284,18 @@ class MemConfig:
   `summaries`, `user_profile`, `events`, `task_queue` plus the `facts_fts` /
   `facts_vec` virtual tables; `002_init.sql` adds the `type` column; `003_init.sql`
   adds the `content` body column; `004_init.sql` adds `user_profile.pinned`, the
-  user's 固定 flag, defaulting every pre-existing row to unpinned) with
-  `PRAGMA user_version`-gated migrations.
+  user's 固定 flag, defaulting every pre-existing row to unpinned;
+  `005_init.sql` adds `facts.reinforce_count` / `last_used_at` / `last_seen_at`
+  and the `fact_reinforcements` evidence log, defaulting every pre-existing fact
+  to un-reinforced) with `PRAGMA user_version`-gated migrations.
 - **Retrieval**: `sqlite-vec` `vec0` KNN (cosine, 512-dim) ⊕ FTS5 (jieba
-  word-segmented for Chinese), fused by Reciprocal Rank Fusion and re-ranked
-  with the trust/importance/recency formula.
+  word-segmented for Chinese), fused by Reciprocal Rank Fusion and re-ranked with
+  `0.4·rrf + 0.2·effective_importance + 0.2·recency + 0.2·trust`. Neither
+  `importance` nor `recency` is min-max normalised: min-max rescales per query,
+  so a negligible gap between two candidates (in relevance, or in age) is
+  stretched across the term's whole weight — enough to cancel the entire
+  reinforcement budget, and enough to call two facts written milliseconds apart
+  "maximally different in age". See [Recency](#recency).
 - **Isolation**: every query is scoped to `user_id`; internal lookups for
   conflict/idempotency honour the same boundary.
 - **Soft deletion**: facts are never physically deleted; `status` moves
@@ -429,6 +446,168 @@ Verify the plugin mounted as a profile layer, not a plain dependency:
 dsh --profile web --dump-config | findstr /C:"atom-memory"
 ```
 
+## Reuse reinforcement
+
+A fact the user keeps coming back to is worth more than one written once — but
+"more" has to be bounded, or a single loudly repeated claim eventually outranks
+everything. `reinforce.py` turns reuse evidence into an **effective importance**
+that is both increasing and capped:
+
+```
+A(n)  = A_MAX · (1 − e^(−λn))          λ = ln2 / N_HALF
+score = clamp(base_importance + A(n), 0, 1)
+```
+
+The shape is the point. At `n = 0` the derivative is `A_MAX · λ`, its maximum,
+and for small `n` the curve is nearly straight — the first reuses each add a
+comparable amount (**locally linear**). Past that the derivative decays to zero,
+so every further reuse adds strictly less than the one before
+(**diminishing marginal effect**), and `A` never reaches `A_MAX` (**bounded**).
+The tuned defaults give:
+
+| n | 0 | 1 | 2 | 3 | 4 | 5 | 8 | ∞ |
+|---|---|---|---|---|---|---|---|---|
+| `A(n)` | .000 | .111 | .197 | .264 | .316 | .357 | .432 | .500 |
+| marginal | — | +.111 | +.086 | +.067 | +.052 | +.041 | +.019 | → 0 |
+
+| parameter | default | meaning |
+|---|---|---|
+| `A_MAX` | `0.5` | most reinforcement can ever add to a fact's importance |
+| `N_HALF` | `3` | reuses needed to bank half of `A_MAX` (`λ = ln2/N_HALF`) |
+| `HALF_LIFE_DAYS` | `75` | how fast banked strength decays without reuse |
+| `COOLDOWN_SEC` | `600` | events closer than this bank nothing |
+
+**Decay is the other half.** The count is not a plain counter but a decaying
+float, topped up by each event: `n ← n·e^(−Δt/τ) + gain`. The same number of
+reuses spread over months therefore outweighs a burst confined to one session,
+and a memory that stops being used fades without anyone deleting it.
+
+**State and strength are different things.** The database holds a *snapshot*: a
+decayed count plus the instant it was taken (`reinforce_count`, `last_used_at`).
+Strength is always *derived* by decaying that snapshot to the moment being asked
+about (`reinforce.adjust` → `effective_importance`). No reader treats the column
+as the current value — doing so was a real defect, because a fact reinforced once
+and then untouched for a year went on reporting its year-old strength forever, so
+"reuse decays" was true of the formula and false of every number the system
+showed. Callers get both: `reinforce_count` (the snapshot) and `strength` (the
+same snapshot decayed to now).
+
+Only an event that actually **banked** something advances the snapshot and its
+timestamp. That is one rule with three consequences, and they are why the write
+path and a replay agree exactly:
+
+| event | snapshot | `last_used_at` | `last_seen_at` |
+|---|---|---|---|
+| banked > 0 | advances | advances | advances |
+| passed the gate, zero gain (`retrieved_only`) | unchanged | unchanged | advances |
+| suppressed by the cooldown | unchanged | unchanged | advances |
+
+A suppressed event leaves the snapshot alone so the decay keeps applying from the
+right origin — a flood of duplicates can neither preserve strength nor slide the
+window forward to deny the fact future reinforcement. A gate-passing zero-gain
+event is treated the same way because the replay gate requires a *positive* gain;
+letting it start a cooldown would make the two paths disagree.
+
+**What counts as reuse** — and what deliberately does not:
+
+| kind | gain | evidence |
+|---|---|---|
+| `user_confirmed` | 1.0 | the user confirmed the fact |
+| `user_restated` | 0.8 | the same claim was stated again in a later session |
+| `applied` | 0.6 | the fact demonstrably shaped an answer |
+| `retrieved_only` | 0.0 | mere recall: logged for observability, never strengthens |
+
+The last row is the load-bearing one. Feeding retrieval hits back into the score
+is a rich-get-richer loop: a fact that merely matched one query's wording becomes
+easier to match forever, and noise hardens into "core memory". Only genuine reuse
+counts. For the same reason **a settings-panel edit is not a confirmation** — an
+edit can be a reword, a type fix, or the correction of a *wrong* memory, the last
+of which is evidence against it. Callers that mean "the user confirmed this" say
+so via `reinforce(...)`, which is explicit and auditable.
+
+Anti-abuse is structural rather than heuristic:
+
+- **Idempotency** is a database invariant — a UNIQUE index on
+  `(user_id, session_id, fact_id, kind)` means a claim restated five times in one
+  session yields exactly one event, and the extractor's existing `idempotent`
+  validation path records it at no extra cost. Growth is therefore linear in
+  *sessions*, not in messages.
+- **A burst collapses to one gain.** Events inside the cooldown bank nothing, and
+  the clock they are measured against only moves for banked events.
+- **Replayable.** `fact_reinforcements` recomputes the snapshot exactly, because
+  `roll()` is a pure function of the prior state and the advance rule above is the
+  same in both directions. That is what makes retuning `A_MAX` or `HALF_LIFE_DAYS`
+  retro-applicable, and suspected abuse auditable. It is verified by
+  differentially replaying randomised multi-year timelines, not by a hand-picked
+  sequence (`tests/test_reinforce_algorithm.py`).
+
+The base `importance` is never rewritten — reinforcement only adds on top of it,
+bounded by `A_MAX` and clamped at 1.0, so reuse can never invert a clear ordering
+of the written-down values. The effective value reaches both ranking surfaces:
+retrieval (`retriever._rerank`) and the injected digest (`memory.md`, which is
+what gets frozen into the system prompt at session start). `AtomMem.reinforce(
+user, fact_id, kind, session_id)` is the explicit entry point; the implicit one
+fires when the extractor sees the user re-state a claim already stored.
+
+Reinforcement history is **local to the database**: `backup`/`restore` carry the
+facts and their base importance, not the reuse log. A restored fact is therefore
+un-reinforced — the honest outcome, since the events that justified the strength
+are not in the snapshot either and the restored fact could not be re-audited.
+
+
+## Recency
+
+The recency term answers "which of the things matching *this query* is most
+current". It is **not** a min-max rescale of the candidate ages, for the same
+reason the importance term is not rescaled: min-max hands the newest candidate
+`1.0` and the oldest `0.0` *whatever the actual spread is*. Two facts written
+milliseconds apart inside one session — the common case — would be treated as
+maximally different in age, and the entire 0.2 recency weight would be spent on a
+difference nobody can perceive.
+
+Instead, ages are made relative and then decayed (`db.age_offset` →
+`db.recency_credit`):
+
+```
+offset  = min(age - newest_age, window)      # newest candidate is the reference
+recency = 0.5 ** (offset / half_life)
+```
+
+| fact | age | min-max (before) | shifted decay (now) |
+|---|---|---|---|
+| newest | 0 s | 1.00 | 1.000 |
+| same session | +86 s | 0.00 | 0.999 |
+| same day | +1 d | 0.01 | 0.977 |
+| one week | +7 d | 0.10 | 0.851 |
+| one month | +30 d | 0.50 | 0.500 |
+
+The min-max column is what the same set looks like when the candidate ages span
+only those 30 days: the newest wins the whole term and the same-session fact is
+scored as maximally stale. The shifted decay keeps near-identical ages
+near-identical, while still resolving a real month.
+
+Two properties fall out, and both need the other:
+
+- **The reference is the newest candidate, not the wall clock.** So nothing can
+  be marked "ancient" against a clock the memory does not know about, the score
+  is deterministic, and an all-old result set still spreads instead of reading as
+  uniformly stale.
+- **The shift is capped** at `RECENCY_REFERENCE_WINDOW_DAYS`. Without a cap, a
+  set that is entirely old would push every member past the decay and collapse
+  them to the same ~0, switching the term off. The cap is a backstop and must
+  stay well above the half-life (it is set to 3×), otherwise it *becomes* the
+  dominant shaper and flattens genuinely different ages onto one credit.
+
+Age is measured from `last_used_at` where the fact has been used, falling back to
+`created_at`. That matters: without it, recency would penalise exactly the
+long-lived facts that reinforcement just promoted, and the two mechanisms would
+cancel each other out.
+
+`memory.md` uses the same decay shape (`db.recency_credit`) with a shorter
+half-life (14 days vs 30) and no window cap — the right anchor for a viewer that
+renders one user's *whole* memory, where the newest memory is a meaningful
+definition of "now".
+
 ## Tests
 
 ```bash
@@ -437,8 +616,9 @@ pytest tests/test_integration.py -v
 (cd dsh && pnpm test && pnpm run build)
 ```
 
-The suite covers storage migrations (including v1→v2 `type`, v2→v3 `content` and
-v3→v4 `pinned` upgrades), rule extraction (semantic / procedural / episodic + the
+The suite covers storage migrations (including v1→v2 `type`, v2→v3 `content`,
+v3→v4 `pinned` and v4→v5 reinforcement-column upgrades), rule extraction
+(semantic / procedural / episodic + the
 `lesson` / `sop` / `decision_rule` knowledge categories), the validation chain
 (episodic non-conflict, procedural single-valued, degenerate
 placeholder/predicate-echo rejection), retrieval, derived views
@@ -447,7 +627,13 @@ rows surviving the facts → profile projection while the panel's own edit still
 applies), the
 `memory.md` renderer in both depths (`tests/test_memory_md.py`: type grouping,
 no `fact_id`/title/scores in the compact depth, type-rank fallback ordering,
-multi-value folding, the token budget as a hard cap, tail-first trimming), and
+multi-value folding, the token budget as a hard cap, tail-first trimming),
+reuse reinforcement (`tests/test_reinforce.py`: the curve's monotonicity,
+concavity, local linearity and bound; cooldown and session idempotency; decay;
+event-log replay fidelity incl. suppressed events; `retrieved_only` staying
+inert; the API/worker paths that produce events; and recency — half-life decay,
+the relative shift and its cap, same-session ages staying near-identical, an
+all-old set still spreading, and `last_used_at` beating `created_at`), and
 the end-to-end pipeline (add/recall/replace/forget/memory_md/summarize/
 idempotency, plus knowledge facts persisting `type` / `content` through recall
 and `memory.md`). Set `ATOM_MEMORY_REAL_EMBED=1` to enable the live-model

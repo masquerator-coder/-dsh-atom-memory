@@ -75,6 +75,7 @@ _METHODS: Dict[str, str] = {
     # UI-facing edit / backup / restore surface.
     "list_facts": "list_facts",
     "edit_fact": "edit_fact",
+    "reinforce": "reinforce",
     "list_profile": "list_profile",
     "upsert_profile": "upsert_profile",
     "delete_profile": "delete_profile",

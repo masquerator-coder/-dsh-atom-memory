@@ -5,7 +5,7 @@ Exposes the full write/read/mutation surface:
     lifecycle  — start() / stop()
     write      — add(user, session, text)
     read       — recall(), memory_md(), user_md(), summary()
-    mutate     — replace(), forget()
+    mutate     — replace(), forget(), reinforce()
     metrics    — stats()
 """
 
@@ -25,6 +25,12 @@ from .embedder import Embedder
 from .memory_md import generate_memory_md
 from .models import SUMMARY_EXCLUDED_KNOWLEDGE
 from .profile import derive_profile_from_facts, profile_md
+from .reinforce import (
+    KIND_USER_CONFIRMED,
+    adjust,
+    effective_importance_at,
+    record_reinforcement,
+)
 from .retriever import Retriever, estimate_tokens, segment_text
 from .summarizer import SCOPE_GLOBAL, rebuild_summary
 from .worker import Worker
@@ -226,6 +232,14 @@ class AtomMem:
                     "content": fact.get("content"),
                     "confidence": fact["confidence"],
                     "importance": fact["importance"],
+                    "effective_importance": fact.get(
+                        "effective_importance", fact["importance"]
+                    ),
+                    # The decayed reuse count behind that score — never the raw
+                    # snapshot column, which was taken at last_used_at.
+                    "strength": fact.get("strength", 0.0),
+                    "reinforce_count": float(fact.get("reinforce_count") or 0.0),
+                    "last_used_at": fact.get("last_used_at"),
                     "final_score": fact["final_score"],
                     "status": fact["status"],
                 }
@@ -585,21 +599,26 @@ class AtomMem:
         Returns:
             ``{"facts", "total", "offset", "limit"}`` where each fact carries
             ``fact_id`` / ``subject`` / ``predicate`` / ``object`` / ``type`` /
-            ``content`` / ``confidence`` / ``importance`` / ``status`` /
-            ``created_at``.
+            ``content`` / ``confidence`` / ``importance`` /
+            ``effective_importance`` / ``reinforce_count`` / ``last_used_at`` /
+            ``status`` / ``created_at``.
         """
         if self.db is None:
             raise RuntimeError("AtomMem is not started; call start() first")
         limit = max(1, min(int(limit), 200))
         offset = max(0, int(offset))
         status_clause = "AND status = 'active'" if not include_retracted else ""
+        # Decay every fact's reinforcement snapshot to one shared instant, so the
+        # page is internally consistent and matches what retrieval would rank.
+        at = now_ms()
         total = self.db.execute(
             f"SELECT COUNT(*) AS n FROM facts WHERE user_id = ? {status_clause}",
             (user_id,),
         ).fetchone()["n"]
         rows = self.db.execute(
             f"SELECT fact_id, subject, predicate, object, type, content, "
-            f"confidence, importance, status, created_at FROM facts "
+            f"confidence, importance, status, created_at, reinforce_count, "
+            f"last_used_at FROM facts "
             f"WHERE user_id = ? {status_clause} "
             f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (user_id, limit, offset),
@@ -614,6 +633,21 @@ class AtomMem:
                 "content": r["content"],
                 "confidence": r["confidence"],
                 "importance": r["importance"],
+                "effective_importance": round(
+                    effective_importance_at(
+                        float(r["importance"] or 0.0),
+                        float(r["reinforce_count"] or 0.0),
+                        r["last_used_at"],
+                        at,
+                    ),
+                    6,
+                ),
+                "strength": round(
+                    adjust(float(r["reinforce_count"] or 0.0), r["last_used_at"], at),
+                    6,
+                ),
+                "reinforce_count": float(r["reinforce_count"] or 0.0),
+                "last_used_at": r["last_used_at"],
                 "status": r["status"],
                 "created_at": r["created_at"],
             }
@@ -684,7 +718,103 @@ class AtomMem:
             await self._resync_fact_vectors(user_id, fact_id)
             self._mark_and_refresh(user_id)
 
+        # Deliberately does *not* reinforce. An edit can be a reword, a type
+        # fix, or a wholesale correction — none of which is evidence that the
+        # fact was reused, and one of which ("fix a wrong memory") is evidence
+        # against it. Treating every UI write as a confirmation let the settings
+        # panel mint the strongest signal in the model (gain 1.0) for free.
+        # Callers that genuinely mean "the user confirmed this" call
+        # `reinforce(...)` themselves, which is explicit and auditable.
         return self._fetch_fact(user_id, fact_id)
+
+    def reinforce(
+        self,
+        user_id: str,
+        fact_id: str,
+        kind: str = KIND_USER_CONFIRMED,
+        session_id: str = "s_ui",
+    ) -> dict:
+        """Record a reuse event for a fact and return its new strength.
+
+        This is the explicit half of the reinforcement loop; the implicit half
+        fires automatically when the extractor observes the user re-stating a
+        claim that is already stored (see :mod:`~atom_memory.reinforce`).
+
+        Only genuine reuse should be reported here. In particular, do **not**
+        call this for a mere retrieval hit: recall feeding back into the score
+        is the self-reinforcing loop the design deliberately excludes.
+
+        Args:
+            user_id: Owner of the fact.
+            fact_id: The active fact to strengthen.
+            kind: Evidence kind — one of ``user_confirmed`` (default),
+                ``user_restated``, ``applied``, ``retrieved_only``.
+            session_id: Session the evidence came from; it scopes the
+                idempotency guard, so one fact strengthens at most once per
+                session per kind.
+
+        Returns:
+            A dict with ``fact_id``, ``kind``, ``reinforce_count`` (the stored
+            snapshot), ``strength`` (the same snapshot decayed to now — what the
+            ranker actually uses), ``importance`` (base),
+            ``effective_importance`` (an alias of ``strength``), ``last_used_at``,
+            ``gain`` and ``applied`` (``False`` for a suppressed duplicate).
+
+        Raises:
+            RuntimeError: If the memory is not started.
+            ValueError: If the fact is not active or not owned by ``user_id``.
+        """
+        if self.db is None:
+            raise RuntimeError("AtomMem is not started; call start() first")
+        base_row = self.db.execute(
+            "SELECT importance FROM facts "
+            "WHERE user_id = ? AND fact_id = ? AND status = 'active'",
+            (user_id, fact_id),
+        ).fetchone()
+        if base_row is None:
+            raise ValueError(f"no active fact {fact_id} for user {user_id}")
+        base = float(base_row["importance"] or 0.0)
+
+        result = record_reinforcement(
+            self.db, fact_id, user_id, session_id, kind
+        )
+        if result is None:
+            # The kind is unregistered, or this session already contributed this
+            # kind of evidence. Report the unchanged state.
+            row = self.db.execute(
+                "SELECT reinforce_count, last_used_at FROM facts "
+                "WHERE fact_id = ?",
+                (fact_id,),
+            ).fetchone()
+            snapshot = float(row["reinforce_count"] or 0.0)
+            strength = effective_importance_at(
+                base, snapshot, row["last_used_at"]
+            )
+            return {
+                "fact_id": fact_id,
+                "kind": kind,
+                "reinforce_count": snapshot,
+                "strength": round(strength, 6),
+                "importance": base,
+                "effective_importance": round(strength, 6),
+                "last_used_at": row["last_used_at"],
+                "gain": 0.0,
+                "applied": False,
+            }
+        self._mark_and_refresh(user_id)
+        # ``result`` was computed at the event instant, which for the default
+        # (now) path is this instant, so ``strong_after`` is already current.
+        return {
+            "fact_id": fact_id,
+            "kind": kind,
+            "reinforce_count": result.n,
+            "strength": result.strong_after,
+            "importance": base,
+            "effective_importance": result.strong_after,
+            "last_used_at": result.last_used_at,
+            "gain": result.gain,
+            "applied": result.applied,
+        }
 
     def list_profile(self, user_id: str) -> dict:
         """List a user's profile rows for the settings UI.
@@ -845,7 +975,8 @@ class AtomMem:
     def _fetch_fact(self, user_id: str, fact_id: str) -> dict:
         row = self.db.execute(
             "SELECT fact_id, subject, predicate, object, type, content, "
-            "confidence, importance, status, created_at FROM facts "
+            "confidence, importance, status, created_at, reinforce_count, "
+            "last_used_at FROM facts "
             "WHERE user_id = ? AND fact_id = ?",
             (user_id, fact_id),
         ).fetchone()
@@ -860,6 +991,19 @@ class AtomMem:
             "content": row["content"],
             "confidence": row["confidence"],
             "importance": row["importance"],
+            "effective_importance": round(
+                effective_importance_at(
+                    float(row["importance"] or 0.0),
+                    float(row["reinforce_count"] or 0.0),
+                    row["last_used_at"],
+                ),
+                6,
+            ),
+            "strength": round(
+                adjust(float(row["reinforce_count"] or 0.0), row["last_used_at"]), 6
+            ),
+            "reinforce_count": float(row["reinforce_count"] or 0.0),
+            "last_used_at": row["last_used_at"],
             "status": row["status"],
             "created_at": row["created_at"],
         }

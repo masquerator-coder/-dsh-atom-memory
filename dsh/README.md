@@ -73,6 +73,16 @@ pnpm build       # -> lib/index.mjs
 > 随 `backup`/`restore` 一起往返（对比之后仍固定，不会被恢复动作悄悄解冻），`memory_user_md`
 > 渲染时会在来源后标出 `固定`，让模型知道哪些属性的稳定是刻意的。数据库 schema 升到 v4
 > （`user_profile.pinned`，历史行一律为 0 = 未固定）。
+>
+> **复用强化（reuse reinforcement）**：被反复使用的记忆会变强，但**有上限**。每条事实带一个
+> 复用聚合量（`reinforce_count` / `last_used_at`，schema v5，migration `005_init.sql`），由
+> 只追加的 `fact_reinforcements` 事件表喂养；分数 = 抽取时的 `importance` + **饱和**加成
+> `A_MAX·(1 − e^(−λn))`——前几次复用近似等量加强（局部线性），此后每次加成都严格变小（边际
+> 递减）且永不越过 `A_MAX`（有界，默认 0.5）。强度还会按半衰期（默认 75 天）**衰减**，因此
+> 不再被使用的记忆会自然淡化。**检索命中不算复用**（那是"越召回越容易被召回"的自强化回路，
+> 只会让噪声硬化成"核心记忆"）；只有用户确认/编辑、跨会话重述、以及被实际采用才计数，事件
+> 表上的 UNIQUE 索引保证同一会话同一事实同一种类只算一次。基础 `importance` 永不被改写，
+> `recall` / `list_facts` 会同时返回 `effective_importance`。
 
 > **浏览器端构建说明**：dsh 宿主对 `exports["./client"]` 是**原样当作浏览器
 > bundle 服务**的（`client-modules` 直接 `readFileSync` 该文件，不编译 TS/TSX），
