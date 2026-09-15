@@ -24,6 +24,13 @@ export const memorySettingsStyleText = `
 .atom-memory-toggle{position:relative;display:inline-flex}
 .atom-memory-toggle .atom-memory-tooltip{position:absolute;top:calc(100% + 8px);left:0;z-index:50;width:max-content;max-width:min(320px,80vw);padding:8px 11px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:8px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:12px;line-height:1.55;box-shadow:0 10px 28px rgba(0,0,0,0.4);white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transition:opacity 120ms ease,visibility 120ms ease}
 .atom-memory-toggle:hover .atom-memory-tooltip,.atom-memory-toggle:focus-within .atom-memory-tooltip{opacity:1;visibility:visible}
+/* Memory-summary modal: rendered as a structured list (not raw markdown). */
+.atom-memory-summary-list{display:flex;flex-direction:column;gap:12px}
+.atom-memory-summary-section{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:10px;background:var(--dsw-alias-bg-layer-2,#24262b)}
+.atom-memory-summary-section-title{display:flex;align-items:baseline;gap:8px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e8eb)}
+.atom-memory-summary-version{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;color:var(--dsw-alias-label-secondary,#8a8f98)}
+.atom-memory-summary-items{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:1.55;color:var(--dsw-alias-label-primary,#e6e8eb)}
+.atom-memory-summary-note,.atom-memory-summary-coverage{margin:0;padding-top:6px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,0.06));font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#8a8f98);white-space:pre-wrap;word-break:break-word}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
 /* Master-switch sliding toggle: the native checkbox is visually hidden (kept
    focusable + accessible); the track + sliding thumb render the switch. */

@@ -559,6 +559,13 @@ window.__ModuleLoader__.load({
 .atom-memory-toggle{position:relative;display:inline-flex}
 .atom-memory-toggle .atom-memory-tooltip{position:absolute;top:calc(100% + 8px);left:0;z-index:50;width:max-content;max-width:min(320px,80vw);padding:8px 11px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:8px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:12px;line-height:1.55;box-shadow:0 10px 28px rgba(0,0,0,0.4);white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transition:opacity 120ms ease,visibility 120ms ease}
 .atom-memory-toggle:hover .atom-memory-tooltip,.atom-memory-toggle:focus-within .atom-memory-tooltip{opacity:1;visibility:visible}
+/* Memory-summary modal: rendered as a structured list (not raw markdown). */
+.atom-memory-summary-list{display:flex;flex-direction:column;gap:12px}
+.atom-memory-summary-section{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:10px;background:var(--dsw-alias-bg-layer-2,#24262b)}
+.atom-memory-summary-section-title{display:flex;align-items:baseline;gap:8px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e8eb)}
+.atom-memory-summary-version{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;color:var(--dsw-alias-label-secondary,#8a8f98)}
+.atom-memory-summary-items{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:1.55;color:var(--dsw-alias-label-primary,#e6e8eb)}
+.atom-memory-summary-note,.atom-memory-summary-coverage{margin:0;padding-top:6px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,0.06));font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#8a8f98);white-space:pre-wrap;word-break:break-word}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
 /* Master-switch sliding toggle: the native checkbox is visually hidden (kept
    focusable + accessible); the track + sliding thumb render the switch. */
@@ -634,6 +641,69 @@ window.__ModuleLoader__.load({
 			document.head.appendChild(style);
 		}
 		//#endregion
+		//#region src/client/summary-parse.ts
+		/** The Chinese full-width semicolon the Python `_aggregate` joins items with. */
+		const JOIN_SEPARATOR = "；";
+		/** Strip a leading `# ` or `## ` heading marker. */
+		function stripHeading(line) {
+			return line.replace(/^#+\s+/, "");
+		}
+		/** Parse a `## theme (vN)` heading into `{ theme, version }`. */
+		function parseSectionHeading(heading) {
+			const m = heading.match(/^(.*?)\s*\(v(\d+)\)\s*$/);
+			if (m) return {
+				theme: (m[1] ?? "").trim(),
+				version: `v${m[2]}`
+			};
+			return { theme: heading.trim() };
+		}
+		/** Split a compressed body line into trimmed list items on the `；` separator. */
+		function splitItems(body) {
+			return body.split(JOIN_SEPARATOR).map((part) => part.trim()).filter((part) => part.length > 0);
+		}
+		/**
+		* Parse the Host summary markdown into a structured list.
+		*
+		* @param text The markdown string from `AtomMemoryController.summary` (non-empty).
+		* @returns A structured {@link ParsedSummary}.
+		*/
+		function parseSummary(text) {
+			const sections = [];
+			let current;
+			let rawText;
+			const lines = text.split(/\r?\n/);
+			for (const line of lines) {
+				const trimmed = line.trimEnd();
+				if (trimmed.length === 0) continue;
+				if (trimmed.startsWith("## ")) {
+					const { theme, version } = parseSectionHeading(stripHeading(trimmed));
+					current = {
+						theme,
+						version,
+						items: []
+					};
+					sections.push(current);
+					continue;
+				}
+				if (trimmed.startsWith("# ")) continue;
+				if (trimmed.startsWith("> ")) {
+					const body = trimmed.slice(2).trim();
+					if (current !== void 0) {
+						if (body.includes("覆盖")) current.coverage = body;
+						else current.note = current.note ? `${current.note}\n${body}` : body;
+					}
+					continue;
+				}
+				if (current !== void 0) current.items.push(...splitItems(trimmed));
+				else rawText = rawText ? `${rawText}\n${trimmed}` : trimmed;
+			}
+			return {
+				empty: sections.length === 0,
+				sections,
+				rawText
+			};
+		}
+		//#endregion
 		//#region src/client/MemorySettingsSection.tsx
 		/** The memory settings section rendered inside the dsh settings panel. */
 		/**
@@ -653,6 +723,13 @@ window.__ModuleLoader__.load({
 			contentActions: "atom-memory-content-actions",
 			toggle: "atom-memory-toggle",
 			tooltip: "atom-memory-tooltip",
+			summaryList: "atom-memory-summary-list",
+			summarySection: "atom-memory-summary-section",
+			summarySectionTitle: "atom-memory-summary-section-title",
+			summaryVersion: "atom-memory-summary-version",
+			summaryItems: "atom-memory-summary-items",
+			summaryNote: "atom-memory-summary-note",
+			summaryCoverage: "atom-memory-summary-coverage",
 			switchRow: "atom-memory-switch-row",
 			switch: "atom-memory-switch",
 			switchInput: "atom-memory-switch-input",
@@ -1198,9 +1275,10 @@ window.__ModuleLoader__.load({
 				})
 			});
 		}
-		/** The memory summary viewer modal (read-only). */
+		/** The memory summary viewer modal (read-only, rendered as a structured list). */
 		function SummaryModal(props) {
 			const { t, busy, content, onClose } = props;
+			const parsed = content !== void 0 ? parseSummary(content) : void 0;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Modal, {
 				t,
 				title: t("summaryHeader"),
@@ -1208,12 +1286,35 @@ window.__ModuleLoader__.load({
 				children: busy && content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 					className: css.hint,
 					children: t("summaryLoading")
-				}) : content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+				}) : content === void 0 || parsed && parsed.empty ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 					className: css.empty,
 					children: t("summaryEmpty")
-				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("pre", {
-					className: css.memoryMdView,
-					children: content
+				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					className: css.summaryList,
+					children: parsed.sections.map((sec) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: css.summarySection,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: css.summarySectionTitle,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: sec.theme }), sec.version ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: css.summaryVersion,
+									children: sec.version
+								}) : null]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("ul", {
+								className: css.summaryItems,
+								children: sec.items.map((item, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("li", { children: item }, i))
+							}),
+							sec.note ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: css.summaryNote,
+								children: sec.note
+							}) : null,
+							sec.coverage ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: css.summaryCoverage,
+								children: sec.coverage
+							}) : null
+						]
+					}, `${sec.theme}:${sec.version ?? ""}`))
 				})
 			});
 		}

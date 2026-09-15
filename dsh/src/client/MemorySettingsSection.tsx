@@ -21,6 +21,13 @@ const css = {
   contentActions: 'atom-memory-content-actions',
   toggle: 'atom-memory-toggle',
   tooltip: 'atom-memory-tooltip',
+  summaryList: 'atom-memory-summary-list',
+  summarySection: 'atom-memory-summary-section',
+  summarySectionTitle: 'atom-memory-summary-section-title',
+  summaryVersion: 'atom-memory-summary-version',
+  summaryItems: 'atom-memory-summary-items',
+  summaryNote: 'atom-memory-summary-note',
+  summaryCoverage: 'atom-memory-summary-coverage',
   switchRow: 'atom-memory-switch-row',
   switch: 'atom-memory-switch',
   switchInput: 'atom-memory-switch-input',
@@ -60,6 +67,7 @@ const css = {
 }
 import { LOCALE_NS, type MemorySettingsLocaleKey } from './locales.ts'
 import { ensureMemorySettingsStyle } from './styles.ts'
+import { parseSummary } from './summary-parse.ts'
 import {
   INJECTED_MD_TOKEN_PRESETS,
   nearestInjectedMdPresetIndex,
@@ -590,7 +598,7 @@ function MemoryMdModal(props: {
   )
 }
 
-/** The memory summary viewer modal (read-only). */
+/** The memory summary viewer modal (read-only, rendered as a structured list). */
 function SummaryModal(props: {
   t: RowTranslate
   busy: boolean
@@ -598,13 +606,35 @@ function SummaryModal(props: {
   onClose: () => void
 }) {
   const { t, busy, content, onClose } = props
+  // Parse the Host summary markdown into readable sections + items. The body is
+  // a single `；`-joined line per `##` scope, so splitting it lists each
+  // attribute / preference / workflow / event / knowledge clause instead of
+  // dumping the raw markdown.
+  const parsed = content !== undefined ? parseSummary(content) : undefined
+
   return (
     <Modal t={t} title={t('summaryHeader')} onClose={onClose}>
       {busy && content === undefined
         ? <p className={css.hint}>{t('summaryLoading')}</p>
-        : content === undefined
+        : content === undefined || (parsed && parsed.empty)
           ? <p className={css.empty}>{t('summaryEmpty')}</p>
-          : <pre className={css.memoryMdView}>{content}</pre>}
+          : (
+            <div className={css.summaryList}>
+              {parsed!.sections.map((sec) => (
+                <div className={css.summarySection} key={`${sec.theme}:${sec.version ?? ''}`}>
+                  <div className={css.summarySectionTitle}>
+                    <span>{sec.theme}</span>
+                    {sec.version ? <span className={css.summaryVersion}>{sec.version}</span> : null}
+                  </div>
+                  <ul className={css.summaryItems}>
+                    {sec.items.map((item, i) => <li key={i}>{item}</li>)}
+                  </ul>
+                  {sec.note ? <p className={css.summaryNote}>{sec.note}</p> : null}
+                  {sec.coverage ? <p className={css.summaryCoverage}>{sec.coverage}</p> : null}
+                </div>
+              ))}
+            </div>
+          )}
     </Modal>
   )
 }

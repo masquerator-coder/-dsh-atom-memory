@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed (第十三轮三补：摘要弹窗改为结构化列表查看)
+
+- **「查看摘要」弹窗不再原样展示 markdown**：新增纯函数 `src/client/summary-parse.ts`
+  （`parseSummary`），把 Python `AtomMem.summary` 返回的 markdown 文本解析成结构化
+  列表——每个 `## <scope> (vN)` 归为一节，正文按 `；` 拆成列表项（属性/偏好/工作流/
+  事件/轻知识各一行），`>` 脚注行区分「未展开长文知识」提示与「覆盖 N 条活跃事实」
+  覆盖行；空摘要（无 `##` 节）时显示空态提示。
+- 前端 `SummaryModal` 渲染为 `atom-memory-summary-*` 列表样式（节卡片 + 版本徽标 +
+  `<ul>` 条目标 + 脚注），不再用 `<pre>` 展示原始文本。
+- 测试：新增 `tests/summary-parse.test.ts`（6 例，覆盖分节/版本/条目拆分/脚注归类/
+  空摘要/CRLF），`section-render.client.test.ts` 的摘要弹窗断言改为校验列表渲染。
+
 ### Changed (第十三轮再补：记忆开关改为滑动开关)
 
 - **「记忆开关」改为滑动开关（toggle）**：原裸复选框换成

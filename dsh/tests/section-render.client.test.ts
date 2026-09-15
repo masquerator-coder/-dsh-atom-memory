@@ -82,7 +82,7 @@ function buildController(
     editFact: async () => ({ ok: true, value: {} }),
     deleteFact: async () => ({ ok: true, value: {} }),
     memoryMd: async () => ({ ok: true, value: '# memory.md\ntest' }),
-    summary: async () => ({ ok: true, value: '# 摘要 (Summary) — global\n属性: 工程师' }),
+    summary: async () => ({ ok: true, value: '# 摘要 (Summary) — global\n\n## global (v3)\n\n属性: 工程师；偏好 Python (喜欢)\n\n> ⚠ 另有 1 条长文知识（SOP/few-shot）未展开正文\n> 覆盖 2 条活跃事实 · fact_id: f1, f2' }),
     listProfile: async () => ({
       ok: true,
       value: {
@@ -253,12 +253,20 @@ describe('MemorySettingsSection client render', () => {
     expect(within(group).getByText('编辑画像')).toBeTruthy()
     expect(within(group).getByText('编辑记忆')).toBeTruthy()
     // Not open initially.
-    expect(screen.queryByText(/# 摘要/)).toBeNull()
+    expect(screen.queryByText('global')).toBeNull()
     await act(async () => {
       fireEvent.click(screen.getByText('查看摘要'))
     })
     await act(async () => {})
-    expect(screen.getByText(/# 摘要 \(Summary\) — global/)).toBeTruthy()
+    // The summary renders as a structured list, not raw markdown: the section
+    // heading, version badge, and each `；`-joined clause become a list item.
+    expect(screen.getByText('global')).toBeTruthy()
+    expect(screen.getByText('v3')).toBeTruthy()
+    expect(screen.getByText('属性: 工程师')).toBeTruthy()
+    expect(screen.getByText('偏好 Python (喜欢)')).toBeTruthy()
+    expect(screen.getByText(/覆盖 2 条活跃事实/)).toBeTruthy()
+    // The raw document title / heading markers are not dumped.
+    expect(screen.queryByText(/# 摘要 \(Summary\) — global/)).toBeNull()
   })
 
   it('lays the memory-content actions out as a horizontal row of tooltip buttons', async () => {
@@ -525,7 +533,7 @@ describe('MemorySettingsSection client render', () => {
    */
   it('defines a stylesheet rule for the slider and pin classes it renders', async () => {
     const { memorySettingsStyleText } = await import('../src/client/styles.ts')
-    for (const cls of ['atom-memory-slider', 'atom-memory-ticks', 'atom-memory-tick-active', 'atom-memory-pin', 'atom-memory-content-actions', 'atom-memory-toggle', 'atom-memory-tooltip', 'atom-memory-group', 'atom-memory-group-title', 'atom-memory-switch', 'atom-memory-switch-input', 'atom-memory-switch-track', 'atom-memory-switch-thumb']) {
+    for (const cls of ['atom-memory-slider', 'atom-memory-ticks', 'atom-memory-tick-active', 'atom-memory-pin', 'atom-memory-content-actions', 'atom-memory-toggle', 'atom-memory-tooltip', 'atom-memory-group', 'atom-memory-group-title', 'atom-memory-switch', 'atom-memory-switch-input', 'atom-memory-switch-track', 'atom-memory-switch-thumb', 'atom-memory-summary-list', 'atom-memory-summary-section', 'atom-memory-summary-section-title', 'atom-memory-summary-version', 'atom-memory-summary-items', 'atom-memory-summary-note', 'atom-memory-summary-coverage']) {
       expect(memorySettingsStyleText).toContain(`.${cls}`)
     }
   })
