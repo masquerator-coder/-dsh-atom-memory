@@ -553,7 +553,23 @@ window.__ModuleLoader__.load({
    summary + profile + memory & facts read as one area rather than loose panels. */
 .atom-memory-group{display:flex;flex-direction:column;gap:10px;margin:0;padding:14px 14px 16px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:12px;background:transparent}
 .atom-memory-group-title{font-size:13px;font-weight:700;padding:0 6px;color:var(--dsw-alias-label-primary,#e6e8eb)}
+/* The 记忆内容 region lays its actions out as one horizontal row of buttons. */
+.atom-memory-content-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
+/* Each action is a relative anchor for its hover tooltip. */
+.atom-memory-toggle{position:relative;display:inline-flex}
+.atom-memory-toggle .atom-memory-tooltip{position:absolute;top:calc(100% + 8px);left:0;z-index:50;width:max-content;max-width:min(320px,80vw);padding:8px 11px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:8px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:12px;line-height:1.55;box-shadow:0 10px 28px rgba(0,0,0,0.4);white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transition:opacity 120ms ease,visibility 120ms ease}
+.atom-memory-toggle:hover .atom-memory-tooltip,.atom-memory-toggle:focus-within .atom-memory-tooltip{opacity:1;visibility:visible}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
+/* Master-switch sliding toggle: the native checkbox is visually hidden (kept
+   focusable + accessible); the track + sliding thumb render the switch. */
+.atom-memory-switch{position:relative;display:inline-flex;flex:none;width:40px;height:22px;margin-top:1px}
+.atom-memory-switch .atom-memory-switch-input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.atom-memory-switch .atom-memory-switch-track{position:absolute;inset:0;border-radius:999px;background:var(--dsw-alias-border-l3,rgba(255,255,255,0.16));transition:background-color 160ms ease;pointer-events:none}
+.atom-memory-switch .atom-memory-switch-thumb{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-label-primary,#e6e8eb);transition:transform 160ms ease}
+.atom-memory-switch .atom-memory-switch-input:checked ~ .atom-memory-switch-track{background:var(--dsw-alias-button-primary-fill,rgb(65,118,230))}
+.atom-memory-switch .atom-memory-switch-input:checked ~ .atom-memory-switch-track .atom-memory-switch-thumb{transform:translateX(18px)}
+.atom-memory-switch .atom-memory-switch-input:focus-visible ~ .atom-memory-switch-track{outline:2px solid var(--dsw-alias-button-primary-fill,rgb(65,118,230));outline-offset:2px}
+.atom-memory-switch .atom-memory-switch-input:disabled{cursor:not-allowed}
 .atom-memory-inputs{display:flex;gap:8px;margin-top:4px}
 .atom-memory-field{display:flex;flex-direction:column;gap:3px;margin-top:8px}
 .atom-memory-field-label{font-size:12px;color:var(--dsw-alias-label-secondary,#8a8f98)}
@@ -634,7 +650,14 @@ window.__ModuleLoader__.load({
 			block: "atom-memory-block",
 			group: "atom-memory-group",
 			groupTitle: "atom-memory-group-title",
+			contentActions: "atom-memory-content-actions",
+			toggle: "atom-memory-toggle",
+			tooltip: "atom-memory-tooltip",
 			switchRow: "atom-memory-switch-row",
+			switch: "atom-memory-switch",
+			switchInput: "atom-memory-switch-input",
+			switchTrack: "atom-memory-switch-track",
+			switchThumb: "atom-memory-switch-thumb",
 			radioRow: "atom-memory-radio-row",
 			inputs: "atom-memory-inputs",
 			field: "atom-memory-field",
@@ -780,34 +803,23 @@ window.__ModuleLoader__.load({
 					}) : null,
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
 						className: css.block,
-						disabled: busy || memoryMdBusy,
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("memoryMdHeader") }),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								className: css.btn,
-								style: { alignSelf: "flex-start" },
-								disabled: busy || memoryMdBusy,
-								onClick: openMemoryMd,
-								children: t("memoryMdOpen")
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-								className: css.hint,
-								children: t("memoryMdDesc")
-							})
-						]
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
-						className: css.block,
 						disabled: !state.available,
 						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("masterHeader") }), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 							className: css.switchRow,
-							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								type: "checkbox",
-								checked: state.section.enabled,
-								onChange: (e) => {
-									props.setEnabled(e.currentTarget.checked);
-								}
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+								className: css.switch,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									type: "checkbox",
+									className: css.switchInput,
+									checked: state.section.enabled,
+									onChange: (e) => {
+										props.setEnabled(e.currentTarget.checked);
+									}
+								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: css.switchTrack,
+									"aria-hidden": "true",
+									children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: css.switchThumb })
+								})]
 							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("masterDesc") })]
 						})]
 					}),
@@ -983,71 +995,66 @@ window.__ModuleLoader__.load({
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
 						className: css.group,
 						disabled: busy,
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", {
-								className: css.groupTitle,
-								children: t("contentGroupHeader")
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
-								className: css.block,
-								disabled: busy || summaryBusy,
-								children: [
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("summaryHeader") }),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", {
+							className: css.groupTitle,
+							children: t("contentGroupHeader")
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: css.contentActions,
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.toggle,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 										type: "button",
 										className: css.btn,
-										style: { alignSelf: "flex-start" },
+										disabled: busy || memoryMdBusy,
+										onClick: openMemoryMd,
+										children: t("memoryMdOpen")
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: css.tooltip,
+										children: t("memoryMdDesc")
+									})]
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.toggle,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: css.btn,
 										disabled: busy || summaryBusy,
 										onClick: openSummary,
 										children: t("summaryOpen")
-									}),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-										className: css.hint,
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: css.tooltip,
 										children: t("summaryDesc")
-									})
-								]
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
-								className: css.block,
-								disabled: busy,
-								children: [
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("profileHeader") }),
-									profile.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-										className: css.empty,
-										children: t("profileEmpty")
-									}) : null,
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									})]
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.toggle,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 										type: "button",
 										className: css.btn,
-										style: { alignSelf: "flex-start" },
+										disabled: busy,
 										onClick: () => setModal("profile"),
 										children: t("profileEditBtn")
-									})
-								]
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
-								className: css.block,
-								disabled: busy,
-								children: [
-									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("legend", { children: [
-										t("memoryHeader"),
-										" · ",
-										t("factsHeader")
-									] }),
-									facts.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-										className: css.empty,
-										children: t("factsEmpty")
-									}) : null,
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									}), profile.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: css.tooltip,
+										children: t("profileEmpty")
+									}) : null]
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: css.toggle,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 										type: "button",
 										className: css.btn,
-										style: { alignSelf: "flex-start" },
+										disabled: busy,
 										onClick: () => setModal("facts"),
 										children: t("memoryEditBtn")
-									})
-								]
-							})
-						]
+									}), facts.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: css.tooltip,
+										children: t("factsEmpty")
+									}) : null]
+								})
+							]
+						})]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
 						className: css.block,

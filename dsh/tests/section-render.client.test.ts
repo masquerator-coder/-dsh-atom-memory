@@ -199,6 +199,31 @@ describe('MemorySettingsSection client render', () => {
     expect(screen.queryByText(LOCALE_NS + ':title')).toBeNull()
   })
 
+  it('renders the master switch as a sliding toggle driven by the settings value', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    const enabledWrites: boolean[] = []
+    const real = props.setEnabled as (v: boolean) => Promise<void>
+    props.setEnabled = (async (v: boolean) => { enabledWrites.push(v); await real(v) }) as never
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+
+    const block = screen.getByText('记忆开关').closest('fieldset')!
+    const row = within(block).getByRole('checkbox') as HTMLInputElement
+    // The native checkbox stays the state/accessibility root of the toggle.
+    expect(row.className).toBe('atom-memory-switch-input')
+    expect(row.checked).toBe(true) // buildController seeds enabled: true
+    // It is visually replaced by a track + thumb, not a bare checkbox.
+    expect(block.querySelector('.atom-memory-switch-track')).toBeTruthy()
+    expect(block.querySelector('.atom-memory-switch-thumb')).toBeTruthy()
+
+    await act(async () => {
+      fireEvent.click(row)
+    })
+    expect(enabledWrites).toEqual([false])
+  })
+
   it('opens the memory.md view in a modal', async () => {
     const controller = buildController()
     const { props } = bind(controller)
@@ -220,9 +245,10 @@ describe('MemorySettingsSection client render', () => {
     await act(async () => {
       render(createElement(MemorySettingsSection, props))
     })
-    // The summary button lives inside the 记忆内容 group, sharing it with the
-    // profile (User 画像编辑) and memory & facts editors.
+    // All four memory-content actions (memory.md view / summary / profile /
+    // memory & facts) share the one 记忆内容 group.
     const group = screen.getByText('记忆内容').closest('fieldset')!
+    expect(within(group).getByText('查看 memory.md')).toBeTruthy()
     expect(within(group).getByText('查看摘要')).toBeTruthy()
     expect(within(group).getByText('编辑画像')).toBeTruthy()
     expect(within(group).getByText('编辑记忆')).toBeTruthy()
@@ -233,6 +259,28 @@ describe('MemorySettingsSection client render', () => {
     })
     await act(async () => {})
     expect(screen.getByText(/# 摘要 \(Summary\) — global/)).toBeTruthy()
+  })
+
+  it('lays the memory-content actions out as a horizontal row of tooltip buttons', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    const group = screen.getByText('记忆内容').closest('fieldset')!
+    // The row wraps the four buttons, each as a `.atom-memory-toggle` anchor.
+    const row = group.querySelector('.atom-memory-content-actions')!
+    expect(row).toBeTruthy()
+    const toggles = Array.from(row.querySelectorAll('.atom-memory-toggle'))
+    expect(toggles).toHaveLength(4)
+    // The row is horizontal; every toggle anchors a hidden hover tooltip.
+    for (const toggle of toggles) {
+      expect(toggle.querySelector('.atom-memory-btn')).toBeTruthy()
+      expect(toggle.querySelector('.atom-memory-tooltip')).toBeTruthy()
+    }
+    // Hidden until hover: screen readers / static markup must not read it as
+    // visible text, so the tooltip starts with visibility hidden in CSS.
+    expect(toggles[0]!.querySelector('.atom-memory-tooltip')!.classList.contains('atom-memory-tooltip')).toBe(true)
   })
 
   it('opens the facts editor as an Excel-like table with the saved data', async () => {
@@ -477,7 +525,7 @@ describe('MemorySettingsSection client render', () => {
    */
   it('defines a stylesheet rule for the slider and pin classes it renders', async () => {
     const { memorySettingsStyleText } = await import('../src/client/styles.ts')
-    for (const cls of ['atom-memory-slider', 'atom-memory-ticks', 'atom-memory-tick-active', 'atom-memory-pin']) {
+    for (const cls of ['atom-memory-slider', 'atom-memory-ticks', 'atom-memory-tick-active', 'atom-memory-pin', 'atom-memory-content-actions', 'atom-memory-toggle', 'atom-memory-tooltip', 'atom-memory-group', 'atom-memory-group-title', 'atom-memory-switch', 'atom-memory-switch-input', 'atom-memory-switch-track', 'atom-memory-switch-thumb']) {
       expect(memorySettingsStyleText).toContain(`.${cls}`)
     }
   })

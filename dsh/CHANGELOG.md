@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed (第十三轮再补：记忆开关改为滑动开关)
+
+- **「记忆开关」改为滑动开关（toggle）**：原裸复选框换成
+  `.atom-memory-switch`（隐藏但可聚焦的原生 checkbox + 轨道 + 滑块），
+  `:checked` 驱动轨道变蓝、滑块右移；键盘焦点时有可见 outline。状态/onChange
+  仍由原生 checkbox 承载，可访问性不变。
+
+### Changed (第十三轮补：记忆内容区域按钮横排 + 说明改悬停浮层)
+
+- **「查看 memory.md」并入「记忆内容」区域**：原独立在区域外的 memory.md 块移除，
+  其按钮与 记忆摘要 / 编辑画像 / 编辑记忆 并排。
+- **区域内按钮横向排列**：「记忆内容」区域改为 `atom-memory-content-actions` 一行
+  排列 4 个按钮（查看 memory.md / 查看摘要 / 编辑画像 / 编辑记忆）。
+- **按钮说明改为悬停浮层**：memory.md、摘要的说明文字与画像/事实的空状态提示不再
+  内联显示，改为 `atom-memory-toggle` + `atom-memory-tooltip` 的纯 CSS 悬停浮层
+  （hover / focus-within 显示，默认隐藏）。样式、文案与归组测试同步更新。
+
 ### Added (第十三轮：设置面板新增「记忆摘要」查看 + 记忆内容归组)
 
 - **设置面板新增「记忆摘要」只读查看**：新增「查看摘要」按钮与只读弹窗，走既有

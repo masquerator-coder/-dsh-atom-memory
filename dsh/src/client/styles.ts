@@ -18,7 +18,23 @@ export const memorySettingsStyleText = `
    summary + profile + memory & facts read as one area rather than loose panels. */
 .atom-memory-group{display:flex;flex-direction:column;gap:10px;margin:0;padding:14px 14px 16px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:12px;background:transparent}
 .atom-memory-group-title{font-size:13px;font-weight:700;padding:0 6px;color:var(--dsw-alias-label-primary,#e6e8eb)}
+/* The 记忆内容 region lays its actions out as one horizontal row of buttons. */
+.atom-memory-content-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
+/* Each action is a relative anchor for its hover tooltip. */
+.atom-memory-toggle{position:relative;display:inline-flex}
+.atom-memory-toggle .atom-memory-tooltip{position:absolute;top:calc(100% + 8px);left:0;z-index:50;width:max-content;max-width:min(320px,80vw);padding:8px 11px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:8px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:12px;line-height:1.55;box-shadow:0 10px 28px rgba(0,0,0,0.4);white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transition:opacity 120ms ease,visibility 120ms ease}
+.atom-memory-toggle:hover .atom-memory-tooltip,.atom-memory-toggle:focus-within .atom-memory-tooltip{opacity:1;visibility:visible}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
+/* Master-switch sliding toggle: the native checkbox is visually hidden (kept
+   focusable + accessible); the track + sliding thumb render the switch. */
+.atom-memory-switch{position:relative;display:inline-flex;flex:none;width:40px;height:22px;margin-top:1px}
+.atom-memory-switch .atom-memory-switch-input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.atom-memory-switch .atom-memory-switch-track{position:absolute;inset:0;border-radius:999px;background:var(--dsw-alias-border-l3,rgba(255,255,255,0.16));transition:background-color 160ms ease;pointer-events:none}
+.atom-memory-switch .atom-memory-switch-thumb{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-label-primary,#e6e8eb);transition:transform 160ms ease}
+.atom-memory-switch .atom-memory-switch-input:checked ~ .atom-memory-switch-track{background:var(--dsw-alias-button-primary-fill,rgb(65,118,230))}
+.atom-memory-switch .atom-memory-switch-input:checked ~ .atom-memory-switch-track .atom-memory-switch-thumb{transform:translateX(18px)}
+.atom-memory-switch .atom-memory-switch-input:focus-visible ~ .atom-memory-switch-track{outline:2px solid var(--dsw-alias-button-primary-fill,rgb(65,118,230));outline-offset:2px}
+.atom-memory-switch .atom-memory-switch-input:disabled{cursor:not-allowed}
 .atom-memory-inputs{display:flex;gap:8px;margin-top:4px}
 .atom-memory-field{display:flex;flex-direction:column;gap:3px;margin-top:8px}
 .atom-memory-field-label{font-size:12px;color:var(--dsw-alias-label-secondary,#8a8f98)}

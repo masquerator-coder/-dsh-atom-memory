@@ -18,7 +18,14 @@ const css = {
   block: 'atom-memory-block',
   group: 'atom-memory-group',
   groupTitle: 'atom-memory-group-title',
+  contentActions: 'atom-memory-content-actions',
+  toggle: 'atom-memory-toggle',
+  tooltip: 'atom-memory-tooltip',
   switchRow: 'atom-memory-switch-row',
+  switch: 'atom-memory-switch',
+  switchInput: 'atom-memory-switch-input',
+  switchTrack: 'atom-memory-switch-track',
+  switchThumb: 'atom-memory-switch-thumb',
   radioRow: 'atom-memory-radio-row',
   inputs: 'atom-memory-inputs',
   field: 'atom-memory-field',
@@ -256,30 +263,24 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
       {state.lastError ? <div className={css.error}>{t('error', { message: state.lastError })}</div> : null}
       {status ? <div className={css.status}>{status}</div> : null}
 
-      {/* 0) memory.md — button on left, description below, content in a modal */}
-      <fieldset className={css.block} disabled={busy || memoryMdBusy}>
-        <legend>{t('memoryMdHeader')}</legend>
-        <button
-          type="button"
-          className={css.btn}
-          style={{ alignSelf: 'flex-start' }}
-          disabled={busy || memoryMdBusy}
-          onClick={openMemoryMd}
-        >
-          {t('memoryMdOpen')}
-        </button>
-        <p className={css.hint}>{t('memoryMdDesc')}</p>
-      </fieldset>
-
-      {/* 1) master switch */}
+      {/* 1) master switch — a sliding toggle */}
       <fieldset className={css.block} disabled={!state.available}>
         <legend>{t('masterHeader')}</legend>
         <label className={css.switchRow}>
-          <input
-            type="checkbox"
-            checked={state.section.enabled}
-            onChange={(e) => { void props.setEnabled(e.currentTarget.checked) }}
-          />
+          <span className={css.switch}>
+            {/* Native checkbox drives state & a11y; visually replaced by the
+                sliding track. Kept focusable (visually hidden, not display:none)
+                so keyboard focus + screen readers still work. */}
+            <input
+              type="checkbox"
+              className={css.switchInput}
+              checked={state.section.enabled}
+              onChange={(e) => { void props.setEnabled(e.currentTarget.checked) }}
+            />
+            <span className={css.switchTrack} aria-hidden="true">
+              <span className={css.switchThumb} />
+            </span>
+          </span>
           <span>{t('masterDesc')}</span>
         </label>
       </fieldset>
@@ -416,42 +417,44 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
         <p className={css.hint}>{t('modelHint')}</p>
       </fieldset>
 
-      {/* 4) 记忆内容 group: summary view + user profile + memory & facts share one region */}
+      {/* 4) 记忆内容 group: memory.md view + summary view + user profile + memory & facts
+           share one region; each action is a button in a horizontal row whose explanation
+           appears as a CSS hover tooltip (not inline text). */}
       <fieldset className={css.group} disabled={busy}>
         <legend className={css.groupTitle}>{t('contentGroupHeader')}</legend>
+        <div className={css.contentActions}>
+          {/* memory.md view — read-only injected snapshot in a modal */}
+          <div className={css.toggle}>
+            <button type="button" className={css.btn} disabled={busy || memoryMdBusy} onClick={openMemoryMd}>
+              {t('memoryMdOpen')}
+            </button>
+            <div className={css.tooltip}>{t('memoryMdDesc')}</div>
+          </div>
 
-        {/* 4a) memory summary — read-only aggregate digest in a modal */}
-        <fieldset className={css.block} disabled={busy || summaryBusy}>
-          <legend>{t('summaryHeader')}</legend>
-          <button
-            type="button"
-            className={css.btn}
-            style={{ alignSelf: 'flex-start' }}
-            disabled={busy || summaryBusy}
-            onClick={openSummary}
-          >
-            {t('summaryOpen')}
-          </button>
-          <p className={css.hint}>{t('summaryDesc')}</p>
-        </fieldset>
+          {/* memory summary — read-only aggregate digest in a modal */}
+          <div className={css.toggle}>
+            <button type="button" className={css.btn} disabled={busy || summaryBusy} onClick={openSummary}>
+              {t('summaryOpen')}
+            </button>
+            <div className={css.tooltip}>{t('summaryDesc')}</div>
+          </div>
 
-        {/* 4b) user profile — open an Excel-style modal editor */}
-        <fieldset className={css.block} disabled={busy}>
-          <legend>{t('profileHeader')}</legend>
-          {profile.length === 0 ? <p className={css.empty}>{t('profileEmpty')}</p> : null}
-          <button type="button" className={css.btn} style={{ alignSelf: 'flex-start' }} onClick={() => setModal('profile')}>
-            {t('profileEditBtn')}
-          </button>
-        </fieldset>
+          {/* user profile — open an Excel-style modal editor */}
+          <div className={css.toggle}>
+            <button type="button" className={css.btn} disabled={busy} onClick={() => setModal('profile')}>
+              {t('profileEditBtn')}
+            </button>
+            {profile.length === 0 ? <div className={css.tooltip}>{t('profileEmpty')}</div> : null}
+          </div>
 
-        {/* 4c) memory & edit — open an Excel-style modal editor */}
-        <fieldset className={css.block} disabled={busy}>
-          <legend>{t('memoryHeader')} · {t('factsHeader')}</legend>
-          {facts.length === 0 ? <p className={css.empty}>{t('factsEmpty')}</p> : null}
-          <button type="button" className={css.btn} style={{ alignSelf: 'flex-start' }} onClick={() => setModal('facts')}>
-            {t('memoryEditBtn')}
-          </button>
-        </fieldset>
+          {/* memory & facts — open an Excel-style modal editor */}
+          <div className={css.toggle}>
+            <button type="button" className={css.btn} disabled={busy} onClick={() => setModal('facts')}>
+              {t('memoryEditBtn')}
+            </button>
+            {facts.length === 0 ? <div className={css.tooltip}>{t('factsEmpty')}</div> : null}
+          </div>
+        </div>
       </fieldset>
 
       {/* 6) backup / restore */}
