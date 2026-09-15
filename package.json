@@ -20,7 +20,8 @@
     "dsh/src/client",
     "dsh/cordis.patch.yml",
     "dsh/README.md",
-    "dsh/CHANGELOG.md"
+    "dsh/CHANGELOG.md",
+    "docs"
   ],
   "scripts": {
     "build": "pnpm --dir dsh build",
