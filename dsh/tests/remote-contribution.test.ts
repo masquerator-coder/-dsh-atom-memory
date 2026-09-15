@@ -21,7 +21,6 @@ describe('ATOM_MEMORY_REMOTE', () => {
       'listFacts',
       'editFact',
       'deleteFact',
-      'memoryMd',
       'summary',
       'listProfile',
       'upsertProfile',

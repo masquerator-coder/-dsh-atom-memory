@@ -4,7 +4,7 @@ Exposes the full write/read/mutation surface:
 
     lifecycle  — start() / stop()
     write      — add(user, session, text)
-    read       — recall(), memory_md(), user_md(), summary()
+    read       — recall(), summary(), user_md()
     mutate     — replace(), forget(), reinforce()
     metrics    — stats()
 """
@@ -22,8 +22,6 @@ from .backup import export_memory, import_memory, validate_backup
 from .config import MemConfig
 from .db import now_ms, open_db
 from .embedder import Embedder
-from .memory_md import generate_memory_md
-from .models import SUMMARY_EXCLUDED_KNOWLEDGE
 from .profile import derive_profile_from_facts, profile_md
 from .reinforce import (
     KIND_USER_CONFIRMED,
@@ -32,21 +30,10 @@ from .reinforce import (
     record_reinforcement,
 )
 from .retriever import Retriever, estimate_tokens, segment_text
-from .summarizer import SCOPE_GLOBAL, rebuild_summary
+from .summary import generate_summary
 from .worker import Worker
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_fact_ids(raw) -> list:
-    """Parse the ``summaries.fact_ids`` JSON column into a list of ids."""
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except (ValueError, TypeError):
-        return []
-    return [str(x) for x in parsed] if isinstance(parsed, list) else []
 
 
 class AtomMem:
@@ -91,8 +78,6 @@ class AtomMem:
             max_retries=self.config.max_retries,
             llm_extractor=self.config.llm_extractor,
             privacy_filter=self.config.privacy_filter,
-            summary_debounce_sec=self.config.summary_rebuild_debounce_sec,
-            summary_max_tokens=self.config.memory_md_token_limit,
         )
         self._worker.start()
         self._started = True
@@ -203,8 +188,8 @@ class AtomMem:
             include_pending: Whether to include not-yet-persisted candidates.
 
         Returns:
-            A dict with keys ``facts``, ``summaries``, ``pending``,
-            ``conflicts``, ``token_count`` and ``trace_id``.
+            A dict with keys ``facts``, ``pending``, ``conflicts``,
+            ``token_count`` and ``trace_id``.
         """
         if self.db is None or self.retriever is None:
             raise RuntimeError("AtomMem is not started; call start() first")
@@ -250,51 +235,13 @@ class AtomMem:
             self._load_pending(user_id) if include_pending else []
         )
 
-        # Reads are authoritative: the write path debounces rebuilds and never
-        # reschedules a deferred one, so a summary can sit stale indefinitely.
-        # Refresh it here so recall always carries current content.
-        self._ensure_summary(user_id)
-        summaries, summary_tokens = self._load_summaries(user_id)
-
         return {
             "facts": facts,
-            "summaries": summaries,
             "pending": pending,
             "conflicts": [],
-            "token_count": used + summary_tokens,
+            "token_count": used,
             "trace_id": str(uuid.uuid4()),
         }
-
-    def _load_summaries(self, user_id: str) -> tuple:
-        """Load the user's fresh (non-stale) summaries for recall.
-
-        Returns:
-            A ``(summaries, token_count)`` tuple where each summary has
-            ``summary_id``, ``scope``, ``theme``, ``text``, ``fact_ids`` and
-            ``version``.
-        """
-        rows = self.db.execute(
-            "SELECT summary_id, scope, theme, text, fact_ids, version "
-            "FROM summaries WHERE user_id = ? AND stale = 0",
-            (user_id,),
-        ).fetchall()
-        summaries = []
-        tokens = 0
-        for r in rows:
-            import json as _json
-
-            summaries.append(
-                {
-                    "summary_id": r["summary_id"],
-                    "scope": r["scope"],
-                    "theme": r["theme"],
-                    "text": r["text"],
-                    "fact_ids": r["fact_ids"],
-                    "version": r["version"],
-                }
-            )
-            tokens += estimate_tokens(r["text"])
-        return summaries, tokens
 
     def _load_pending(self, user_id: str) -> list:
         """Load still-pending fact candidates for a user (candidate_id only)."""
@@ -318,13 +265,13 @@ class AtomMem:
             )
         return pending
 
-    async def memory_md(
+    async def summary(
         self,
         user_id: str,
         max_tokens: int = 1500,
         detail: bool = True,
     ) -> str:
-        """Render the user's ``memory.md`` derived view.
+        """Render the user's ``summary`` derived view.
 
         Args:
             user_id: The user whose memory is rendered.
@@ -342,7 +289,7 @@ class AtomMem:
         """
         if self.db is None:
             raise RuntimeError("AtomMem is not started; call start() first")
-        return generate_memory_md(self.db, user_id, max_tokens, detail)
+        return generate_summary(self.db, user_id, max_tokens, detail)
 
     async def user_md(self, user_id: str, max_tokens: int = 800) -> str:
         """Render the user's profile as markdown.
@@ -360,113 +307,6 @@ class AtomMem:
             raise RuntimeError("AtomMem is not started; call start() first")
         derive_profile_from_facts(self.db, user_id)
         return profile_md(self.db, user_id, max_tokens)
-
-    async def summary(self, user_id: str) -> str:
-        """Render the user's aggregate summary as markdown.
-
-        The summary is a compact, lossy digest of the active facts — stable
-        attributes, preferences, workflows, recent events and light knowledge —
-        intended as the cheap "look first, then drill in with recall" view. It
-        is refreshed first when missing or stale.
-
-        The rendering carries the covered ``fact_id``s and an explicit note
-        about long-form knowledge (SOP / few-shot) whose body was deliberately
-        left out of the digest, so a reader can see *that* there is detail to
-        drill into and *which* facts hold it.
-
-        Args:
-            user_id: The user whose summary is rendered.
-
-        Returns:
-            A markdown string. Contains an explicit empty notice when the user
-            has no active facts yet.
-        """
-        if self.db is None:
-            raise RuntimeError("AtomMem is not started; call start() first")
-        self._ensure_summary(user_id)
-        rows = self.db.execute(
-            "SELECT scope, theme, text, version, fact_ids FROM summaries "
-            "WHERE user_id = ? AND stale = 0 ORDER BY scope",
-            (user_id,),
-        ).fetchall()
-        if not rows:
-            return (
-                f"# 摘要 (Summary) — {user_id}\n\n"
-                "_暂无摘要。_ (No summary yet — no active facts.)\n"
-            )
-        lines = [f"# 摘要 (Summary) — {user_id}", ""]
-        for r in rows:
-            fact_ids = _parse_fact_ids(r["fact_ids"])
-            lines.append(f"## {r['theme'] or r['scope']} (v{r['version']})")
-            lines.append("")
-            lines.append(r["text"])
-            lines.append("")
-            excluded = self._excluded_knowledge_ids(user_id, fact_ids)
-            if excluded:
-                lines.append(
-                    f"> ⚠ 另有 {len(excluded)} 条长文知识（SOP/few-shot）未展开正文，"
-                    f"需要时用 memory_recall 检索，或直接查看 fact_id: "
-                    f"{', '.join(excluded)}"
-                )
-            lines.append(
-                f"> 覆盖 {len(fact_ids)} 条活跃事实 · fact_id: {', '.join(fact_ids) or '（无）'}"
-            )
-        return "\n".join(lines)
-
-    def _excluded_knowledge_ids(self, user_id: str, fact_ids: list) -> list:
-        """Return the subset of ``fact_ids`` whose type is long-form knowledge.
-
-        Those bodies are intentionally absent from the summary text, so the
-        caller surfaces their ids as drill-down pointers.
-
-        Args:
-            user_id: Owner of the facts.
-            fact_ids: Fact ids covered by the summary.
-
-        Returns:
-            Fact ids whose ``type`` is in ``SUMMARY_EXCLUDED_KNOWLEDGE``.
-        """
-        if self.db is None or not fact_ids:
-            return []
-        placeholders = ",".join("?" for _ in fact_ids)
-        rows = self.db.execute(
-            f"SELECT fact_id, type FROM facts WHERE user_id = ? "
-            f"AND fact_id IN ({placeholders})",
-            (user_id, *fact_ids),
-        ).fetchall()
-        return [
-            r["fact_id"]
-            for r in rows
-            if (r["type"] or "semantic") in SUMMARY_EXCLUDED_KNOWLEDGE
-        ]
-
-    def _ensure_summary(self, user_id: str) -> None:
-        """Rebuild the user's summary when it is missing or stale.
-
-        The write path (``_after_mutation``) marks summaries stale and enqueues
-        a debounced rebuild, but a rebuild deferred by the debounce is never
-        rescheduled — so a summary can remain stale forever once mutations stop.
-        Read paths call this to guarantee current content. The aggregate is pure
-        in-process string work over the facts table (no model call), so doing it
-        on demand is cheap.
-
-        Args:
-            user_id: The user whose summary should be current.
-        """
-        if self.db is None:
-            return
-        row = self.db.execute(
-            "SELECT stale FROM summaries WHERE user_id = ? AND scope = ?",
-            (user_id, SCOPE_GLOBAL),
-        ).fetchone()
-        if row is not None and not row["stale"]:
-            return
-        rebuild_summary(
-            self.db,
-            user_id,
-            scope=SCOPE_GLOBAL,
-            max_tokens=self.config.memory_md_token_limit,
-        )
 
     # -- mutation surface -----------------------------------------------------------
 
@@ -668,8 +508,7 @@ class AtomMem:
         """Directly update an active fact (user-invoked UI edit).
 
         Fields given as ``None`` are left unchanged. Editing re-embeds the
-        fact's searchable text so retrieval and FTS stay consistent, then marks
-        summaries stale (read paths refresh them on demand). Returns the
+        fact's searchable text so retrieval and FTS stay consistent. Returns the
         updated fact.
 
         Args:
@@ -716,7 +555,6 @@ class AtomMem:
                     values,
                 )
             await self._resync_fact_vectors(user_id, fact_id)
-            self._mark_and_refresh(user_id)
 
         # Deliberately does *not* reinforce. An edit can be a reword, a type
         # fix, or a wholesale correction — none of which is evidence that the
@@ -801,7 +639,6 @@ class AtomMem:
                 "gain": 0.0,
                 "applied": False,
             }
-        self._mark_and_refresh(user_id)
         # ``result`` was computed at the event instant, which for the default
         # (now) path is this instant, so ``strong_after`` is already current.
         return {
@@ -967,7 +804,6 @@ class AtomMem:
             payload,
             self.embedder.embed_one,
         )
-        self._mark_and_refresh(user_id)
         return result
 
     # --- edit helpers ---------------------------------------------------------
@@ -1041,18 +877,6 @@ class AtomMem:
                 (fact_id, blob),
             )
 
-    def _mark_and_refresh(self, user_id: str) -> None:
-        """Mark summaries stale and enqueue a debounced rebuild after an edit.
-
-        Read paths (``memory_md`` / ``recall`` / ``summary``) refresh on demand
-        via ``_ensure_summary``, so this keeps derived views consistent even
-        before the worker rebuild lands.
-        """
-        if self._worker is not None:
-            self._worker._after_mutation(user_id)
-        else:
-            mark_stale(self.db, user_id)
-
     def stats(self, user_id: str) -> dict:
         """Return aggregate counters for a user.
 
@@ -1060,8 +884,8 @@ class AtomMem:
             user_id: The user whose counts are reported.
 
         Returns:
-            A dict with ``facts`` (active), ``pending`` (unprocessed
-            candidates), ``stale_summaries`` and ``summaries`` (fresh).
+            A dict with ``facts`` (active) and ``pending`` (unprocessed
+            candidates).
         """
         if self.db is None:
             raise RuntimeError("AtomMem is not started; call start() first")
@@ -1075,18 +899,8 @@ class AtomMem:
             "WHERE user_id = ? AND status = 'pending'",
             (user_id,),
         ).fetchone()
-        stale = self.db.execute(
-            "SELECT COUNT(*) AS n FROM summaries WHERE user_id = ? AND stale = 1",
-            (user_id,),
-        ).fetchone()
-        fresh = self.db.execute(
-            "SELECT COUNT(*) AS n FROM summaries WHERE user_id = ? AND stale = 0",
-            (user_id,),
-        ).fetchone()
 
         return {
             "facts": facts["n"],
             "pending": pending["n"],
-            "stale_summaries": stale["n"],
-            "summaries": fresh["n"],
         }

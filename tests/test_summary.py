@@ -1,4 +1,4 @@
-"""Tests for ``memory.md`` rendering (``memory_md.py``).
+"""Tests for ``summary`` rendering (``summary.py``).
 
 Covers both render depths and, above all, the properties the old implementation
 got wrong: memory types stay distinct instead of collapsing into one flat list;
@@ -14,13 +14,13 @@ import re
 
 from atom_memory.db import connect_for_tests
 from atom_memory.models import NEUTRAL_SCORE
-from atom_memory.memory_md import (
+from atom_memory.summary import (
     _DETAIL_CONTENT_CHARS,
     _MAX_COMPACT_LINE_CHARS,
     _MAX_DETAIL_FIELD_CHARS,
     _MAX_FOLDED_VALUE_CHARS,
     _RECENCY_HALF_LIFE_SECONDS,
-    generate_memory_md,
+    generate_summary,
 )
 from atom_memory.retriever import estimate_tokens
 
@@ -59,7 +59,7 @@ def _insert_fact(
 
 
 def _md(conn, max_tokens: int = 1500, detail: bool = False, user_id: str = "u1"):
-    return generate_memory_md(conn, user_id, max_tokens, detail)
+    return generate_summary(conn, user_id, max_tokens, detail)
 
 
 # ---- compact depth -----------------------------------------------------------

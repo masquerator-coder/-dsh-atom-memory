@@ -6,7 +6,7 @@
  * @module dsh-atom-memory/config
  */
 import z from '@deepseek-ai/schemastery'
-import { DEFAULT_INJECTED_MD_TOKENS } from './injection-budget.ts'
+import { DEFAULT_INJECTED_SUMMARY_TOKENS } from './injection-budget.ts'
 
 export interface Config {
   /** Python-side SQLite database path (expanded by the library). */
@@ -49,22 +49,22 @@ export interface Config {
   preCompressionCapture?: boolean
   /** Max facts surfaced to the model per recall tool call. */
   maxRecalledFacts?: number
-  /** Estimated token cap for returned memory.md. */
-  memoryMdTokens?: number
+  /** Estimated token cap for returned summary. */
+  summaryTokens?: number
   /**
-   * Token cap for the memory.md snapshot frozen into the system prompt.
+   * Token cap for the summary snapshot frozen into the system prompt.
    *
-   * Deliberately separate from (and smaller than) `memoryMdTokens`: the
+   * Deliberately separate from (and smaller than) `summaryTokens`: the
    * injected text is paid for on every request of a session and is rendered at
    * the compact depth, while the tool/settings view returns the full detail
    * list.
    *
    * This is only the *seed* for the live value: the settings panel owns it at
-   * runtime (`atom-memory` → `injectedMemoryMdTokens`), and a change there
+   * runtime (`atom-memory` → `injectedSummaryTokens`), and a change there
    * applies to every session that has not frozen its snapshot yet.
    */
-  injectedMemoryMdTokens?: number
-  /** Inject a session-start-frozen memory.md snapshot into the system prompt. */
+  injectedSummaryTokens?: number
+  /** Inject a session-start-frozen summary snapshot into the system prompt. */
   contextInjectionEnabled?: boolean
   /** Per-RPC timeout in ms. */
   rpcTimeoutMs?: number
@@ -89,8 +89,8 @@ export const Config: z<Config> = z.object({
   nudgeIntervalMinutes: z.number().default(30),
   preCompressionCapture: z.boolean().default(true),
   maxRecalledFacts: z.number().default(10),
-  memoryMdTokens: z.number().default(1500),
-  injectedMemoryMdTokens: z.number().default(DEFAULT_INJECTED_MD_TOKENS),
+  summaryTokens: z.number().default(1500),
+  injectedSummaryTokens: z.number().default(DEFAULT_INJECTED_SUMMARY_TOKENS),
   contextInjectionEnabled: z.boolean().default(true),
   rpcTimeoutMs: z.number().default(30_000),
 })

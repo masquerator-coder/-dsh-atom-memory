@@ -31,7 +31,6 @@ def _make(tmp_path, monkeypatch) -> AtomMem:
         MemConfig(
             db_path=str(tmp_path / "mem.db"),
             worker_poll_interval_sec=0.05,
-            summary_rebuild_debounce_sec=0.0,
             max_retries=3,
         )
     )
@@ -247,7 +246,6 @@ def test_export_memory_is_valueless_without_rows(tmp_path, monkeypatch):
         snapshot = mem.backup("u1")
         assert snapshot["facts"] == []
         assert snapshot["profile"] == []
-        assert snapshot["summaries"] == []
         await mem.stop()
 
     _run(scenario())
@@ -255,6 +253,6 @@ def test_export_memory_is_valueless_without_rows(tmp_path, monkeypatch):
 
 def test_validate_backup_rejects_bad_shape():
     with pytest.raises(ValueError):
-        validate_backup({"version": 999, "facts": [], "profile": [], "summaries": []})
+        validate_backup({"version": 999, "facts": [], "profile": []})
     with pytest.raises(ValueError):
-        validate_backup({"version": BACKUP_VERSION, "facts": "nope", "profile": [], "summaries": []})
+        validate_backup({"version": BACKUP_VERSION, "facts": "nope", "profile": []})

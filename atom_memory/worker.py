@@ -28,7 +28,6 @@ from .db import now_ms
 from .models import AtomicFact, FactCandidate, default_importance
 from .reinforce import KIND_USER_RESTATED, record_reinforcement
 from .retriever import segment_text
-from .summarizer import SCOPE_GLOBAL, mark_stale, try_rebuild
 from .validator import validate
 
 logger = logging.getLogger(__name__)
@@ -120,8 +119,6 @@ class Worker:
         max_retries: int = 3,
         llm_extractor: Optional[Callable[..., list]] = None,
         privacy_filter: str = "private",
-        summary_debounce_sec: float = 30.0,
-        summary_max_tokens: int = 1500,
     ) -> None:
         """Initialise the worker.
 
@@ -133,8 +130,6 @@ class Worker:
             max_retries: Max retries before a task is marked dead.
             llm_extractor: Optional LLM extractor callable.
             privacy_filter: Default privacy tag applied during validation.
-            summary_debounce_sec: Debounce for debounced summary rebuilds.
-            summary_max_tokens: Token cap for rebuilt summaries.
         """
         self.conn = conn
         self.embed_func = embed_func
@@ -145,8 +140,6 @@ class Worker:
 
         self.extractor = Extractor(llm_extractor=llm_extractor)
         self.privacy_filter = privacy_filter
-        self.summary_debounce_sec = summary_debounce_sec
-        self.summary_max_tokens = summary_max_tokens
         self._task: Optional[asyncio.Task] = None
 
     # -- lifecycle -----------------------------------------------------------
@@ -225,8 +218,6 @@ class Worker:
                 await self._process_forget(payload)
             elif task_type == "persist_pre":
                 await self._process_persist_pre(payload)
-            elif task_type == "rebuild_md":
-                await self._process_rebuild_md(payload)
             else:
                 raise ValueError(f"unknown task_type: {task_type}")
 
@@ -315,8 +306,6 @@ class Worker:
             self._set_candidate_status(candidate_id, CAND_STATUS_SKIPPED)
             return
 
-        persisted = False
-        reinforced = False
         for candidate in candidates:
             result = validate(
                 candidate, self.conn, privacy_filter=self.privacy_filter
@@ -332,17 +321,14 @@ class Worker:
                 # already hold: that is the cleanest reuse evidence there is, and
                 # it costs nothing extra to observe (see reinforce.py).
                 if result.kind == "idempotent" and result.suppressed:
-                    reinforced |= self._reinforce(
+                    self._reinforce(
                         result.suppressed, user_id, session_id,
                         KIND_USER_RESTATED,
                     )
                 continue
             await self._persist_fact(candidate, trace_id=None)
-            persisted = True
 
         self._set_candidate_status(candidate_id, CAND_STATUS_APPLIED)
-        if persisted or reinforced:
-            self._after_mutation(user_id)
 
     def _reinforce(
         self, fact_id: str, user_id: str, session_id: str, kind: str
@@ -391,8 +377,6 @@ class Worker:
         turn_id = int(payload.get("turn_id", 0))
         candidates = payload.get("candidates") or []
 
-        persisted = False
-        reinforced = False
         for d in candidates:
             cand = _candidate_from_rpc_dict(d, user_id, session_id, turn_id)
             result = validate(cand, self.conn, privacy_filter=self.privacy_filter)
@@ -402,17 +386,14 @@ class Worker:
                     cand.candidate_id, result.kind, result.reason,
                 )
                 if result.kind == "idempotent" and result.suppressed:
-                    reinforced |= self._reinforce(
+                    self._reinforce(
                         result.suppressed, user_id, session_id,
                         KIND_USER_RESTATED,
                     )
                 continue
             await self._persist_fact(cand, trace_id=None)
-            persisted = True
 
         self._set_candidate_status(candidate_id, CAND_STATUS_APPLIED)
-        if persisted or reinforced:
-            self._after_mutation(user_id)
 
     def _set_candidate_status(self, candidate_id: str, status: str) -> None:
         """Update a fact_candidates row's status."""
@@ -482,15 +463,6 @@ class Worker:
         return fact_id
 
     # -- mutation bookkeeping -----------------------------------------------------
-
-    def _after_mutation(self, user_id: str) -> None:
-        """Mark summaries stale and schedule a debounced summary rebuild.
-
-        Called after any fact mutation so derived views (summaries) are
-        flagged and eventually regenerated.
-        """
-        mark_stale(self.conn, user_id)
-        self._enqueue("rebuild_md", user_id, {"user_id": user_id})
 
     def _enqueue(self, task_type: str, user_id: str, payload: dict) -> str:
         """Insert a task into the queue and return its id."""
@@ -565,7 +537,6 @@ class Worker:
         if new_ids:
             self._supersede(old_fact_id, new_ids[0])
             self._set_candidate_status(candidate_id, CAND_STATUS_APPLIED)
-            self._after_mutation(user_id)
         else:
             self._set_candidate_status(candidate_id, CAND_STATUS_SKIPPED)
 
@@ -602,23 +573,3 @@ class Worker:
         self.conn.commit()
 
         self._set_candidate_status(candidate_id, CAND_STATUS_APPLIED)
-        self._after_mutation(user_id)
-
-    # -- rebuild_md handler -----------------------------------------------------------
-
-    async def _process_rebuild_md(self, payload: dict) -> None:
-        """Handle a rebuild_md task: debounced summary regeneration.
-
-        Args:
-            payload: keys user_id.
-        """
-        user_id = payload.get("user_id")
-        if not user_id:
-            raise ValueError("rebuild_md payload missing user_id")
-        try_rebuild(
-            self.conn,
-            user_id,
-            scope=SCOPE_GLOBAL,
-            debounce_sec=self.summary_debounce_sec,
-            max_tokens=self.summary_max_tokens,
-        )

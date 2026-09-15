@@ -215,34 +215,34 @@ def test_rerank_ties_break_by_confidence():
         conn.close()
 
 
-# ---- memory_md / profile rendering (derived views) ---------------------------
+# ---- summary / profile rendering (derived views) -----------------------------
 
-def test_memory_md_contains_fact_id():
-    from atom_memory.memory_md import generate_memory_md
+def test_summary_contains_fact_id():
+    from atom_memory.summary import generate_summary
 
     conn = connect_for_tests()
     try:
         _insert_fact(conn, "f1", "u1", "用户", "偏好", "黑咖啡")
         conn.commit()
-        md = generate_memory_md(conn, "u1", max_tokens=2000, detail=True)
+        md = generate_summary(conn, "u1", max_tokens=2000, detail=True)
         assert "f1" in md
         assert "黑咖啡" in md
         # other user not shown
-        md2 = generate_memory_md(conn, "u2", max_tokens=2000, detail=True)
+        md2 = generate_summary(conn, "u2", max_tokens=2000, detail=True)
         assert "暂无" in md2
     finally:
         conn.close()
 
 
-def test_memory_md_compact_omits_fact_id():
+def test_summary_compact_omits_fact_id():
     """The injected depth drops the UUIDs, keeping the content itself."""
-    from atom_memory.memory_md import generate_memory_md
+    from atom_memory.summary import generate_summary
 
     conn = connect_for_tests()
     try:
         _insert_fact(conn, "f1", "u1", "用户", "偏好", "黑咖啡")
         conn.commit()
-        md = generate_memory_md(conn, "u1", max_tokens=2000, detail=False)
+        md = generate_summary(conn, "u1", max_tokens=2000, detail=False)
         assert "黑咖啡" in md
         assert "f1" not in md
     finally:

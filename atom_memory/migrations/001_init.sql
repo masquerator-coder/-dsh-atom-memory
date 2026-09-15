@@ -44,20 +44,6 @@ CREATE TABLE fact_candidates (
 );
 CREATE INDEX idx_cand_user_status ON fact_candidates(user_id, status);
 
-CREATE TABLE summaries (
-    summary_id  TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL,
-    scope       TEXT NOT NULL,
-    theme       TEXT,
-    text        TEXT NOT NULL,
-    fact_ids    TEXT NOT NULL,
-    version     INTEGER NOT NULL DEFAULT 1,
-    stale       INTEGER NOT NULL DEFAULT 0,
-    token_count INTEGER,
-    updated_at  INTEGER NOT NULL
-);
-CREATE INDEX idx_sum_user_scope ON summaries(user_id, scope, stale);
-
 CREATE TABLE user_profile (
     user_id    TEXT NOT NULL,
     section    TEXT NOT NULL,

@@ -22,7 +22,7 @@ from .config import MemConfig
 logger = logging.getLogger(__name__)
 
 # The highest schema version the bundled migrations know about.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def now_ms() -> int:
@@ -38,7 +38,7 @@ def now_ms() -> int:
 # Every time-based credit in the library is one shape: an exponential decay with
 # a half-life. It lives here, next to :func:`now_ms`, because this module is
 # already the single authority on what a timestamp means, and because both
-# consumers (the retriever's ranking and ``memory.md``'s budget allocation) must
+# consumers (the retriever's ranking and ``summary``'s budget allocation) must
 # agree on the shape even though they tune different half-lives. The alternative
 # — a per-query min-max normalisation of ages — is what this replaces: it
 # rescales the candidate set so the best fact scores 1.0 and the worst 0.0

@@ -103,42 +103,22 @@ export class AtomMemoryController extends TypertRemoteService {
   }
 
   /**
-   * Render the user's `memory.md` exactly as the host injects it.
+   * Render the user's `summary` exactly as the host injects it.
    *
-   * The panel's "view memory.md" modal must show the *same text the model
-   * sees*, so this asks for the compact depth (`detail: false`) the session
-   * system prompt is frozen from: grouped by memory type, priority-ordered, no
+   * The panel's "view memory" modal must show the *same text the model sees*,
+   * so this asks for the compact depth (`detail: false`) the session system
+   * prompt is frozen from: grouped by memory type, priority-ordered, no
    * `fact_id`. The full list with `fact_id`s stays available through the
-   * `memory_memory_md` tool, whose whole purpose is locating a fact to edit.
+   * `memory_summary_detail` tool, whose whole purpose is locating a fact to
+   * edit.
    */
   @Remote
-  async memoryMd(args: { user: string; maxTokens?: number }): Promise<string> {
+  async summary(args: { user: string; maxTokens?: number }): Promise<string> {
     this.assertReady()
-    const result = await this.bridge.call<{ text?: string }>('memory_md', {
+    const result = await this.bridge.call<{ text?: string }>('summary', {
       user_id: args.user,
       max_tokens: args.maxTokens ?? 1500,
       detail: false,
-    })
-    // `AtomMem.memory_md` returns the markdown string directly; tolerate a
-    // wrapped shape in case the Python side ever changes the contract.
-    return typeof result === 'string' ? result : (result?.text ?? '')
-  }
-
-  /**
-   * Render the user's aggregate memory summary (a compact, lossy digest of the
-   * active facts — stable attributes, preferences, workflows, recent events and
-   * light knowledge — capped by the summary's token budget).
-   *
-   * Complements the `memoryMd` view: `memory.md` is the per-type grouped digest
-   * frozen into the session system prompt, while `summary` is the cheaper
-   * "look first, then drill in" aggregate with the covered fact_ids and an
-   * explicit note about long-form knowledge bodies left out of the digest.
-   */
-  @Remote
-  async summary(args: { user: string }): Promise<string> {
-    this.assertReady()
-    const result = await this.bridge.call<{ text?: string } | string>('summary', {
-      user_id: args.user,
     })
     // `AtomMem.summary` returns the markdown string directly; tolerate a
     // wrapped shape in case the Python side ever changes the contract.

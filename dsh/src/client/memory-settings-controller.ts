@@ -13,8 +13,8 @@
 import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import {
-  DEFAULT_INJECTED_MD_TOKENS,
-  clampInjectedMdTokens,
+  DEFAULT_INJECTED_SUMMARY_TOKENS,
+  clampInjectedSummaryTokens,
 } from '../injection-budget.ts'
 
 /** The live settings section this panel edits (mirrors the Host side). */
@@ -23,8 +23,8 @@ export interface MemorySettingsSection {
   captureEnabled: boolean
   llmExtractionEnabled: boolean
   contextInjectionEnabled: boolean
-  /** Estimated-token budget for the memory.md snapshot injected into the prompt. */
-  injectedMemoryMdTokens: number
+  /** Estimated-token budget for the memory summary snapshot injected into the prompt. */
+  injectedSummaryTokens: number
   extractionModel?: {
     provider?: string
     model?: string
@@ -48,9 +48,7 @@ export interface MemoryData {
     content?: string
   }>
   profile: Array<{ section: string; key: string; value: string; pinned?: boolean }>
-  /** The rendered `memory.md` view (injected system-prompt memory), lazy-loaded. */
-  memoryMd?: string
-  /** The rendered aggregate memory summary digest, lazy-loaded. */
+  /** The rendered `summary` view (injected system-prompt memory), lazy-loaded. */
   summary?: string
 }
 
@@ -78,20 +76,19 @@ export interface MemorySettingsFace {
   }
   setEnabled: (enabled: boolean) => Promise<void>
   /**
-   * Set the injected memory.md token budget.
+   * Set the injected memory summary token budget.
    *
-   * Clamped by the caller (`clampInjectedMdTokens`) before it gets here so the
+   * Clamped by the caller (`clampInjectedSummaryTokens`) before it gets here so the
    * panel and the Host agree on the bounds; the Host clamps again on the way in.
    */
-  setInjectedMemoryMdTokens: (tokens: number) => Promise<void>
+  setInjectedSummaryTokens: (tokens: number) => Promise<void>
   setExtractionModel: (provider: string, model: string) => Promise<void>
   /** Write the whole extraction-model override (provider/model/baseURL/protocol/apiKey). */
   setExtractionModelOverride: (override: NonNullable<MemorySettingsSection['extractionModel']>) => Promise<void>
   refreshData: () => Promise<void>
   saveFact: (fact: MemoryData['facts'][number]) => Promise<void>
   deleteFact: (factId: string) => Promise<void>
-  fetchMemoryMd: () => Promise<string>
-  /** Lazy-load the user's aggregate memory summary digest (see Host `summary`). */
+  /** Lazy-load the user's compact summary (the view injected into the prompt). */
   fetchSummary: () => Promise<string>
   upsertProfile: (section: string, key: string, value: string, pinned: boolean) => Promise<void>
   deleteProfile: (section: string, key: string) => Promise<void>
@@ -156,7 +153,7 @@ interface RemoteAtomMemory {
     type?: string
   }): Promise<WireResult<unknown>>
   deleteFact(args: { user: string; fact_id: string }): Promise<WireResult<unknown>>
-  memoryMd(args: { user: string; maxTokens?: number }): Promise<WireResult<string>>
+  summary(args: { user: string; maxTokens?: number }): Promise<WireResult<string>>
   summary(args: { user: string }): Promise<WireResult<string>>
   listProfile(args: { user: string }): Promise<WireResult<{ profile: MemoryData['profile'] }>>
   upsertProfile(args: { user: string; section: string; key: string; value: string; pinned?: boolean }): Promise<WireResult<unknown>>
@@ -187,7 +184,7 @@ export class MemorySettingsController {
       captureEnabled: true,
       llmExtractionEnabled: true,
       contextInjectionEnabled: true,
-      injectedMemoryMdTokens: DEFAULT_INJECTED_MD_TOKENS,
+      injectedSummaryTokens: DEFAULT_INJECTED_SUMMARY_TOKENS,
       extractionModel: undefined,
     },
     data: { facts: [], profile: [] },
@@ -207,8 +204,8 @@ export class MemorySettingsController {
     return {
       hooks: { memorySettings: this.store },
       setEnabled: (enabled) => this.scope.set('enabled', enabled),
-      setInjectedMemoryMdTokens: (tokens) =>
-        this.scope.set('injectedMemoryMdTokens', clampInjectedMdTokens(tokens)),
+      setInjectedSummaryTokens: (tokens) =>
+        this.scope.set('injectedSummaryTokens', clampInjectedSummaryTokens(tokens)),
       setExtractionModel: (provider, model) =>
         this.scope.set('extractionModel', { provider, model }),
       setExtractionModelOverride: (override) =>
@@ -216,7 +213,6 @@ export class MemorySettingsController {
       refreshData: () => this.refreshData(),
       saveFact: (fact) => this.saveFact(fact),
       deleteFact: (factId) => this.deleteFact(factId),
-      fetchMemoryMd: () => this.fetchMemoryMd(),
       fetchSummary: () => this.fetchSummary(),
       upsertProfile: (section, key, value, pinned) => this.upsertProfile(section, key, value, pinned),
       deleteProfile: (section, key) => this.deleteProfile(section, key),
@@ -297,23 +293,6 @@ export class MemorySettingsController {
       this.store.set({
         ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
       })
-    }
-  }
-
-  private async fetchMemoryMd(): Promise<string> {
-    try {
-      const text = unwrap(await this.r().memoryMd({ user: USER }))
-      this.store.set({
-        ...this.store.getSnapshot(),
-        data: { ...this.store.getSnapshot().data, memoryMd: text },
-        lastError: undefined,
-      })
-      return text
-    } catch (err) {
-      this.store.set({
-        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
-      })
-      throw err
     }
   }
 
@@ -422,7 +401,7 @@ function defaulted(value: MemorySettingsSection): MemorySettingsSection {
     captureEnabled: value.captureEnabled ?? true,
     llmExtractionEnabled: value.llmExtractionEnabled ?? true,
     contextInjectionEnabled: value.contextInjectionEnabled ?? true,
-    injectedMemoryMdTokens: clampInjectedMdTokens(value.injectedMemoryMdTokens),
+    injectedSummaryTokens: clampInjectedSummaryTokens(value.injectedSummaryTokens),
     extractionModel: value.extractionModel,
   }
 }

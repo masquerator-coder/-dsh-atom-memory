@@ -866,7 +866,6 @@ def _make(monkeypatch) -> AtomMem:
         MemConfig(
             db_path=":memory:",
             worker_poll_interval_sec=0.05,
-            summary_rebuild_debounce_sec=0.0,
             max_retries=3,
         )
     )

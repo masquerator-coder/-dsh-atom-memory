@@ -18,8 +18,8 @@ the tools, and the settings panel — read [`dsh/README.md`](../dsh/README.md).
 
 ## Core idea
 
-Atomic facts are the single authoritative minimum memory unit. Summaries, user
-profiles, and `memory.md` are all derived views over those facts.
+Atomic facts are the single authoritative minimum memory unit. The memory
+summary and the user profile are all derived views over those facts.
 
 ## Installation
 
@@ -57,8 +57,8 @@ async def main():
         print(fact["subject"], fact["predicate"], fact["object"], fact["final_score"])
 
     # derived views
-    print(await mem.memory_md("user_1"))                  # full list, with fact_id
-    print(await mem.memory_md("user_1", detail=False))    # compact injected digest
+    print(await mem.summary("user_1"))                  # full list, with fact_id
+    print(await mem.summary("user_1", detail=False))    # compact injected digest
     print(await mem.user_md("user_1"))                    # user profile markdown
 
     # mutate: soft replace and soft forget
@@ -86,29 +86,29 @@ Primary class: `AtomMem`.
 | `start` | `async start() -> None` | Open DB, load embedder, start worker. Idempotent. |
 | `stop` | `async stop() -> None` | Stop worker and close DB. Idempotent. |
 | `add` | `async add(user_id, session_id, text, turn_id=0) -> dict` | Enqueue an utterance for extraction. Returns `{candidate_id, status, trace_id}` (`status='pending'`). |
-| `recall` | `async recall(user_id, query, token_budget=2000, top_k=10, include_pending=True) -> dict` | Ranked active facts + fresh summaries + pending candidates. |
+| `recall` | `async recall(user_id, query, token_budget=2000, top_k=10, include_pending=True) -> dict` | Ranked active facts + pending candidates. |
 | `replace` | `async replace(user_id, fact_id, new_text) -> dict` | Soft-replace: old fact → `superseded`, `superseded_by` set, new fact `active`. |
 | `forget` | `async forget(user_id, fact_id=None, session_id=None) -> dict` | Soft-delete: fact(s) → `retracted`. Pass exactly one of `fact_id`/`session_id`. |
-| `memory_md` | `async memory_md(user_id, max_tokens=1500, detail=True) -> str` | Render the user's memory.md. `detail=True` lists every fact with its `fact_id`; `detail=False` renders the compact digest injected into the prompt. |
+| `summary` | `async summary(user_id, max_tokens=1500, detail=True) -> str` | Render the memory summary. `detail=True` lists every fact with its `fact_id`; `detail=False` renders the compact digest injected into the prompt. |
 | `user_md` | `async user_md(user_id, max_tokens=800) -> str` | Render the user's profile markdown. |
-| `stats` | `stats(user_id) -> dict` | Counters: `facts`, `pending`, `stale_summaries`, `summaries`. |
+| `stats` | `stats(user_id) -> dict` | Counters: `facts`, `pending`. |
 | `reinforce` | `async reinforce(user, fact_id, kind, session_id) -> dict` | Explicit reuse evidence. See [Reuse reinforcement](reinforcement.md). |
 
-### `memory.md` — one view, two depths
+### `summary` — one view, two depths
 
-`memory.md` is a derived view over the active facts. It renders at two depths
-from one implementation (`memory_md.generate_memory_md`):
+The memory summary is a derived view over the active facts. It renders at two
+depths from one implementation (`summary.generate_summary`):
 
 | Depth | Used by | Shape |
 | --- | --- | --- |
-| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** and the settings **"view memory.md" dialog** | Facts grouped by memory type, ordered by a blend of importance and recency; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; **every rendered line capped at 80 characters** (`_MAX_COMPACT_LINE_CHARS`, ellipsis included), with folded values clipped to 40 characters each *before* joining (`_MAX_FOLDED_VALUE_CHARS`) so one runaway value cannot hide its siblings; no document title. |
-| `detail=True` (detail) | the `memory_memory_md` tool | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line. Each of `subject` / `predicate` / `object` is clipped to 120 characters (`_MAX_DETAIL_FIELD_CHARS`) and the body sub-line to 120 (`_DETAIL_CONTENT_CHARS`) — the `fact_id` and the bullet structure are never truncated, because locating a fact by id is what this depth is for. |
+| `detail=False` (compact) | the session-start-**frozen system-prompt snapshot** and the settings **"view memory" dialog** | Facts grouped by memory type, ordered by a blend of importance and recency; single-valued attributes fold to `predicate: value` and repeated attributes/preferences merge onto one line; **no `fact_id`**; **every rendered line capped at 80 characters** (`_MAX_COMPACT_LINE_CHARS`, ellipsis included), with folded values clipped to 40 characters each *before* joining (`_MAX_FOLDED_VALUE_CHARS`) so one runaway value cannot hide its siblings; no document title. |
+| `detail=True` (detail) | the `memory_summary_detail` tool | One bullet per fact with its `fact_id`, plus the knowledge body on a folded sub-line. Each of `subject` / `predicate` / `object` is clipped to 120 characters (`_MAX_DETAIL_FIELD_CHARS`) and the body sub-line to 120 (`_DETAIL_CONTENT_CHARS`) — the `fact_id` and the bullet structure are never truncated, because locating a fact by id is what this depth is for. |
 
 Both read paths that a human inspects are therefore *the model's own view*: the
 dialog asks for the compact depth so the panel cannot drift from what the
 prompt carries. The only reason to render `detail=True` is to obtain a
 `fact_id` for locating a fact — which is precisely what the
-`memory_memory_md` tool is for, so the dialog does not need it.
+`memory_summary_detail` tool is for, so the dialog does not need it.
 
 Ordering blends **importance and recency** into one score, rather than ranking by
 importance with recency only as a tie-break. `importance` is only treated as a
@@ -139,7 +139,7 @@ measured on the **assembled artifact** (body + that very footer), so the token
 budget is a hard cap on what is actually returned.
 
 The budget for the injected snapshot is user-configurable in the dsh settings
-panel (**系统提示词注入体积（memory.md）**: a slider over the fixed gears
+panel (**系统提示词注入体积（记忆摘要）**: a slider over the fixed gears
 300 / 800 / 1500 / 3000 / 6000 / 12000 tokens) and defaults to 800. Gears rather
 than a free number, because this is the one memory knob whose cost recurs on
 *every* request of a session: a slipped digit cannot silently multiply it, and
@@ -154,7 +154,7 @@ their byte-identical text and their KV cache.
 `fact_id` is deliberately absent from the compact depth: 19 UUIDs cost roughly
 700 tokens, more than they carry information for the model, while every fact
 stays addressable through `recall` (which returns `fact_id`), the
-`memory_memory_md` tool, and the settings editor.
+`memory_summary_detail` tool, and the settings editor.
 
 ### Per-line length cap
 
@@ -185,8 +185,6 @@ fits 49 lines at 1500 tokens, against 46 before the cap existed.
      "confidence": 0.9, "importance": 0.7, "final_score": 0.88, "status": "active",
      "type": "lesson", "content": "<full knowledge body, present for knowledge facts>"}
   ],
-  "summaries": [{"summary_id": "...", "scope": "global", "theme": "...",
-                 "text": "...", "fact_ids": "[...]", "version": 1}],
   "pending": [{"candidate_id": "...", "subject": "...", "predicate": "...",
                "object": "...", "status": "pending"}],
   "conflicts": [],
@@ -209,10 +207,9 @@ class MemConfig:
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_dim: int = 512
     default_token_budget: int = 2000
-    memory_md_token_limit: int = 1500
+    summary_token_limit: int = 1500
     user_md_token_limit: int = 800
     candidate_retention_days: int = 7
-    summary_rebuild_debounce_sec: int = 30
     max_retries: int = 3
     worker_poll_interval_sec: float = 0.5
     llm_extractor: Optional[Callable] = None
@@ -221,12 +218,12 @@ class MemConfig:
 
 ## Design
 
-**Atomic facts are the single authoritative memory unit.** Summaries,
-`user_profile` and `memory.md` are *derived views* rebuilt from facts.
+**Atomic facts are the single authoritative memory unit.** The memory summary
+and `user_profile` are *derived views* rebuilt from facts.
 
 - **Storage**: one SQLite file (WAL) via stdlib `sqlite3`; schema lives in
   `migrations/` (`001_init.sql` creates `facts`, `fact_candidates`,
-  `summaries`, `user_profile`, `events`, `task_queue` plus the `facts_fts` /
+  `user_profile`, `events`, `task_queue` plus the `facts_fts` /
   `facts_vec` virtual tables; `002_init.sql` adds the `type` column; `003_init.sql`
   adds the `content` body column; `004_init.sql` adds `user_profile.pinned`, the
   user's 固定 flag, defaulting every pre-existing row to unpinned;
@@ -261,12 +258,11 @@ class MemConfig:
   to a uniform `0.7` (how sure we are it was stated, which is uniform for a
   direct user message).
 
-### Memory types in summaries
+### Memory types in the summary
 
 Every fact carries a `type` discriminator (`semantic` / `procedural` /
-`episodic` / `sop` / `decision_rule` / `few_shot` / `lesson`), and the derived
-summary is a **whole-picture compression** that buckets the compact types so
-none is lost:
+`episodic` / `sop` / `decision_rule` / `few_shot` / `lesson`), and the summary
+view's compact bucket groups the types by how each renders, so none is lost:
 
 | Type | Example extraction source | Summary rendering |
 | --- | --- | --- |
@@ -289,12 +285,12 @@ Light knowledge (`lesson` / `decision_rule`) is small enough to compress into
 the summary as `<predicate>: <object>`. Long-form knowledge (`sop` / `few_shot`)
 is intentionally left out of the summary text — the bodies are too large to
 compress usefully — but their facts are still indexed (vector + FTS), returned
-by `recall`, rendered in `memory.md`, and their `fact_id` stays tracked in the
+by `recall`, rendered in the summary, and their `fact_id` stays tracked in the
 summary for consistency. A fact's full knowledge body is available through the
-`content` field on `recall` results and `memory.md`. Knowledge categories are
-extracted by both the rule engine (lesson / SOP / decision-rule patterns) and —
-authoritatively — by the LLM extractor, which can also produce `few_shot` and
-`type`-tagged candidates.
+`content` field on `recall` results and the summary's detail depth. Knowledge
+categories are extracted by both the rule engine (lesson / SOP / decision-rule
+patterns) and — authoritatively — by the LLM extractor, which can also produce
+`few_shot` and `type`-tagged candidates.
 
 Provider behavior notes:
 
@@ -322,7 +318,7 @@ placeholder/predicate-echo rejection), retrieval, derived views
 (three-type summary bucketing + light-vs-long knowledge inclusion, pinned-profile
 rows surviving the facts → profile projection while the panel's own edit still
 applies), the
-`memory.md` renderer in both depths (`tests/test_memory_md.py`: type grouping,
+`summary` renderer in both depths (`tests/test_summary.py`: type grouping,
 no `fact_id`/title/scores in the compact depth, type-rank fallback ordering,
 multi-value folding, the token budget as a hard cap, tail-first trimming),
 reuse reinforcement (`tests/test_reinforce.py` and
@@ -332,7 +328,7 @@ fidelity incl. suppressed events; `retrieved_only` staying inert; the
 API/worker paths that produce events; and recency — half-life decay, the
 relative shift and its cap, same-session ages staying near-identical, an
 all-old set still spreading, and `last_used_at` beating `created_at`), and
-the end-to-end pipeline (add/recall/replace/forget/memory_md/summarize/
+the end-to-end pipeline (add/recall/replace/forget/summary/
 idempotency, plus knowledge facts persisting `type` / `content` through recall
-and `memory.md`). Set `ATOM_MEMORY_REAL_EMBED=1` to enable the live-model
+and the summary). Set `ATOM_MEMORY_REAL_EMBED=1` to enable the live-model
 embedding test (needs one-time download).

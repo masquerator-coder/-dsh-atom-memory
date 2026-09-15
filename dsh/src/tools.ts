@@ -124,7 +124,7 @@ export interface ToolDeps {
   bridge: PythonBridge
   fallbackScope: string
   maxRecalledFacts: number
-  memoryMdTokens: number
+  summaryTokens: number
   /**
    * LLM-first extractor (dsh default model). When present, ``memory_add``
    * runs extraction in-process and ships typed candidates to the Python side
@@ -225,12 +225,9 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
             fact_id?: string; subject?: string; predicate?: string
             object?: string; type?: string; content?: string | null
           }>
-          summaries?: Array<{ text?: string }>
         }
         const facts = v.facts ?? []
-        const summaries = (v.summaries ?? []).map(s => (s.text ?? '').trim()).filter(Boolean)
         const blocks: string[] = []
-        if (summaries.length > 0) blocks.push(`【摘要】${summaries.join('；')}`)
         if (facts.length === 0) {
           blocks.push('（无相关记忆）')
         } else {
@@ -259,12 +256,8 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
         token_budget: 4000,
         top_k: args.topK ?? deps.maxRecalledFacts,
       })
-      // Carry the aggregate summary alongside the ranked facts: the Python
-      // side already computes and returns it, and it is the cheap "what is
-      // known overall" context that makes the drilled-in facts interpretable.
       return {
         facts: r.facts ?? [],
-        summaries: r.summaries ?? [],
         token_count: r.token_count ?? 0,
       }
     },
@@ -272,7 +265,9 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
 
   disposers.push(ctx.tools.register(defineTool({
     name: 'memory_summary',
-    description: '查看当前用户记忆的聚合摘要（稳定属性、偏好、工作流程、近期事件、经验教训）。适合先看摘要，再按需用 memory_recall 查明细。',
+    description:
+      '渲染当前用户记忆的紧凑摘要（即注入系统提示词的同一份，按类型分组、优先级排序、不含 fact_id）。'
+      + '适合先看摘要，再按需用 memory_recall 查明细；要定位/编辑具体某条事实请用 memory_summary_detail。',
     parameters: {
       user: { type: 'string', description: '可选：归属用户 id（默认当前会话）' },
     },
@@ -286,7 +281,38 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
     async execute(args, exec) {
       if (deps.isEnabled?.() === false) throw disabledError()
       const uid = args.user ?? userIdOf(exec, scope)
-      const text = await call<string>('summary', { user_id: uid })
+      const text = await call<string>('summary', {
+        user_id: uid,
+        max_tokens: deps.summaryTokens,
+        detail: false,
+      })
+      return { text }
+    },
+  })))
+
+  disposers.push(ctx.tools.register(defineTool({
+    name: 'memory_summary_detail',
+    description:
+      '渲染当前用户记忆的完整清单（每条含 fact_id，便于定位与编辑）。'
+      + '注入系统提示词的是紧凑版（按类型分组、不含 fact_id）——如需确认注入内容，用 memory_summary。',
+    parameters: {
+      user: { type: 'string', description: '可选：归属用户 id（默认当前会话）' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render(_args, value) {
+        const v = value as { text?: string }
+        return [{ type: 'text', text: v.text ?? '' }]
+      },
+    },
+    async execute(args, exec) {
+      if (deps.isEnabled?.() === false) throw disabledError()
+      const uid = args.user ?? userIdOf(exec, scope)
+      const text = await call<string>('summary', {
+        user_id: uid,
+        max_tokens: deps.summaryTokens,
+        detail: true,
+      })
       return { text }
     },
   })))
@@ -306,33 +332,6 @@ export function registerMemoryTools(deps: ToolDeps): (() => void)[] {
       if (deps.isEnabled?.() === false) throw disabledError()
       if (!args.factId) throw new Error('memory_forget requires factId')
       return await call('forget', { user_id: args.user ?? userIdOf(exec, scope), fact_id: args.factId })
-    },
-  })))
-
-  disposers.push(ctx.tools.register(defineTool({
-    name: 'memory_memory_md',
-    description:
-      '渲染当前用户的 memory.md 完整清单（每条含 fact_id，便于定位与编辑）。'
-      + '注入系统提示词的是同一份记忆的紧凑版（按类型分组、不含 fact_id），如需确认注入内容以本工具返回为准。',
-    parameters: {
-      user: { type: 'string', description: '可选：归属用户 id（默认当前会话）' },
-    },
-    output: {
-      schema: { type: 'object', additionalProperties: true },
-      render(_args, value) {
-        const v = value as { text?: string }
-        return [{ type: 'text', text: v.text ?? '' }]
-      },
-    },
-    async execute(args, exec) {
-      if (deps.isEnabled?.() === false) throw disabledError()
-      const uid = args.user ?? userIdOf(exec, scope)
-      const text = await call<string>('memory_md', {
-        user_id: uid,
-        max_tokens: deps.memoryMdTokens,
-        detail: true,
-      })
-      return { text }
     },
   })))
 

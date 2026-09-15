@@ -67,7 +67,7 @@ describe('registerMemoryContext', () => {
     expect(text1).toBeTruthy()
     expect(text2).toBe(text1)          // byte-identical => KV-stable
     expect(bridge.call).toHaveBeenCalledTimes(1) // frozen: no re-read
-    expect(bridge.call.mock.calls[0]![0]).toBe('memory_md')
+    expect(bridge.call.mock.calls[0]![0]).toBe('summary')
     expect(bridge.call.mock.calls[0]![1]).toMatchObject({ user_id: 'global', max_tokens: 1500 })
     // The injected snapshot must be the compact depth: it is paid for on every
     // request, so it drops the fact_id UUIDs and groups by memory type.

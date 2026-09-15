@@ -2,7 +2,7 @@
 
 The public entry point is :class:`~atom_memory.api.AtomMem`, which wraps
 the full pipeline: write (add/extract/validate), recall (FTS + vector), soft
-replace/forget and derived views (memory.md, user profile, summaries).
+replace/forget and derived views (summary, user profile).
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from .db import open_db
 from .embedder import Embedder, deserialize_float32, serialize_float32
 from .models import (
     PRED_EVENT,
-    SUMMARY_LIGHT_KNOWLEDGE,
     TYPE_DECISION_RULE,
     TYPE_EPISODIC,
     TYPE_FEW_SHOT,
@@ -23,7 +22,6 @@ from .models import (
     TYPE_SOP,
     AtomicFact,
     FactCandidate,
-    Summary,
     ValidationResult,
 )
 from .reinforce import (
@@ -44,7 +42,6 @@ __all__ = [
     "deserialize_float32",
     "FactCandidate",
     "AtomicFact",
-    "Summary",
     "ValidationResult",
     "TYPE_SEMANTIC",
     "TYPE_PROCEDURAL",
@@ -53,7 +50,6 @@ __all__ = [
     "TYPE_DECISION_RULE",
     "TYPE_FEW_SHOT",
     "TYPE_LESSON",
-    "SUMMARY_LIGHT_KNOWLEDGE",
     "PRED_EVENT",
     "KIND_USER_CONFIRMED",
     "KIND_USER_RESTATED",

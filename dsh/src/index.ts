@@ -3,7 +3,7 @@
  *
  * A Cordis plugin that:
  *  - spawns and manages the `atom_memory.rpc` Python child process,
- *  - exposes `memory_*` tools (add/recall/summary/forget/memory_md/user_md/stats),
+ *  - exposes `memory_*` tools (add/recall/summary/summary_detail/forget/user_md/stats),
  *  - wires an LLM-first extractor that uses the dsh default model and ships
  *    typed candidates to Python for persistence (rules remain the fallback),
  *  - registers durable capture hooks (per-message, pre-compression rescue,
@@ -21,8 +21,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { Config, type Config as ConfigShape } from './config.ts'
 import {
-  DEFAULT_INJECTED_MD_TOKENS,
-  clampInjectedMdTokens,
+  DEFAULT_INJECTED_SUMMARY_TOKENS,
+  clampInjectedSummaryTokens,
 } from './injection-budget.ts'
 import { PythonBridge, defaultSpawn } from './bridge.ts'
 import { registerMemoryTools } from './tools.ts'
@@ -53,7 +53,6 @@ function buildStartParams(config: ConfigShape): Record<string, unknown> {
   return {
     db_path: config.dbPath ?? '~/.dsh/atom-memory/memory.db',
     worker_poll_interval_sec: 0.5,
-    summary_rebuild_debounce_sec: 5.0,
     max_retries: 3,
   }
 }
@@ -68,7 +67,7 @@ function seedRuntime(config: ConfigShape): LiveRuntime {
     captureEnabled: config.captureEnabled !== false,
     llmExtractionEnabled: config.llmExtractionEnabled !== false,
     contextInjectionEnabled: config.contextInjectionEnabled !== false,
-    injectedMemoryMdTokens: config.injectedMemoryMdTokens,
+    injectedSummaryTokens: config.injectedSummaryTokens,
     extractionModel: config.extractionModel,
   })
 }
@@ -173,7 +172,7 @@ export function apply(ctx: Context, config: ConfigShape): void {
     bridge,
     fallbackScope: FALLBACK_SCOPE,
     maxRecalledFacts: config.maxRecalledFacts ?? 10,
-    memoryMdTokens: config.memoryMdTokens ?? 1500,
+    summaryTokens: config.summaryTokens ?? 1500,
     extract,
     isEnabled: () => runtime.isEnabled(),
   })
@@ -197,7 +196,7 @@ export function apply(ctx: Context, config: ConfigShape): void {
   //
   // The injected snapshot uses its own (smaller) budget and the compact render
   // depth: it is paid for on every request and is the view that must stay short
-  // and priority-ordered, unlike the full list the `memory_memory_md` tool and
+  // and priority-ordered, unlike the full list the `memory_summary_detail` tool and
   // the settings modal return.
   //
   // The budget is passed as a *getter*, not a value: the settings panel owns it
@@ -208,7 +207,7 @@ export function apply(ctx: Context, config: ConfigShape): void {
     ctx,
     bridge,
     userScope: FALLBACK_SCOPE,
-    resolveMaxTokens: () => clampInjectedMdTokens(runtime.get().injectedMemoryMdTokens),
+    resolveMaxTokens: () => clampInjectedSummaryTokens(runtime.get().injectedSummaryTokens),
     snapshotEnabled: runtime.get().contextInjectionEnabled,
     isEnabled: () => runtime.isEnabled(),
   })
@@ -257,7 +256,7 @@ const LiveSettingsSchema: z<LiveRuntime> = z.object({
   captureEnabled: z.boolean().default(true),
   llmExtractionEnabled: z.boolean().default(true),
   contextInjectionEnabled: z.boolean().default(true),
-  injectedMemoryMdTokens: z.number().default(DEFAULT_INJECTED_MD_TOKENS),
+  injectedSummaryTokens: z.number().default(DEFAULT_INJECTED_SUMMARY_TOKENS),
   extractionModel: z.object({
     provider: z.string().default(''),
     model: z.string().default(''),

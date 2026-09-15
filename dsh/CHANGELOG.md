@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Changed (第十四轮：memory.md 更名 summary，删除冗余的 summaries 聚合层)
+
+- **全局更名 `memory.md` → `summary`**：原先被称作 `memory_md` 的「对事实的 markdown 视图
+  （两个深度渲染）」正式更名为 `summary`，贯穿整条栈（Python / Node / 浏览器）：
+  - 工具 `memory_memory_md` → **`memory_summary_detail`**（RPC `summary` with
+    `detail=true`，返回含 `fact_id` 的完整清单，用于定位/编辑某条事实）；
+  - 工具 `memory_summary` 现在渲染的是**紧凑注入版摘要**（RPC `summary` with
+    `detail=false`），不再是什么聚合 digest——两把工具负责两个深度；
+  - RPC/bridge 方法 `memory_md` → `summary`；`AtomMemoryController.memoryMd()` →
+    `summary()`；浏览器描述符的 `memoryMd` 删除，收敛为单个 `summary` 描述符；
+  - Python 源码 `memory_md.py` → `summary.py`、`tests/test_memory_md.py` →
+    `tests/test_summary.py`。
+- **删除与紧凑视图冗余的 `summaries` 聚合层**：`summarizer.py`、`summaries` 表、
+  聚合版 `memory_summary` 工具、`summary-parse.ts`（把聚合摘要解析成结构化列表的那份）、
+  设置面板的聚合摘要弹窗、`summary_rebuild_debounce_sec` 及整套防抖重建机制全部移除，
+  `tests/test_summarizer.py` 一并删除——聚合 digest 与紧凑视图重复，保留双份只会让
+  「看哪种」与「信哪个」产生分歧。
+- **双深度工具拆分**：`memory_summary`（紧凑）+ `memory_summary_detail`（完整）接替
+  原先一个 `memory_md` 带 `detail` 开关的两深度设计——外侧呈现层不对齐时不会再把
+  一侧的取舍泄漏成另一侧的缺失（不再需要在「保留 `fact_id`」与「占 token 预算」之间
+  二选一，两把工具各保留其所需的一半）。
+- **`memory_recall` 不再前置聚合 `【摘要】` 块**：检索结果不再带那段聚合摘要，其 Python
+  返回值也不再含 `summaries` 字段——紧凑摘要统一由 `memory_summary` 提供，recall 只负责
+  检索命中。
+- **配置更名**：`memoryMdTokens` → `summaryTokens`、`injectedMemoryMdTokens` →
+  `injectedSummaryTokens`（旧名与「memory.md」一样随更名淡出）。
+- **设置面板收敛**：原先「查看 memory.md / 查看摘要」两个入口合并为单个「查看摘要」
+  按钮；「系统提示词注入体积（memory.md）」滑块标题改为「系统提示词注入体积（记忆摘要）」。
+- **备份版本升至 2**：`BACKUP_VERSION` 由 1 → 2，`validate_backup` 现在做严格校验——
+  携带已删除的 `summaries` 字段的旧备份会被拒绝，不再尝试恢复一个已不存在的聚合层。
+
 ### Changed (第十三轮三补：摘要弹窗改为结构化列表查看)
 
 - **「查看摘要」弹窗不再原样展示 markdown**：新增纯函数 `src/client/summary-parse.ts`

@@ -21,13 +21,6 @@ const css = {
   contentActions: 'atom-memory-content-actions',
   toggle: 'atom-memory-toggle',
   tooltip: 'atom-memory-tooltip',
-  summaryList: 'atom-memory-summary-list',
-  summarySection: 'atom-memory-summary-section',
-  summarySectionTitle: 'atom-memory-summary-section-title',
-  summaryVersion: 'atom-memory-summary-version',
-  summaryItems: 'atom-memory-summary-items',
-  summaryNote: 'atom-memory-summary-note',
-  summaryCoverage: 'atom-memory-summary-coverage',
   switchRow: 'atom-memory-switch-row',
   switch: 'atom-memory-switch',
   switchInput: 'atom-memory-switch-input',
@@ -56,7 +49,7 @@ const css = {
   tick: 'atom-memory-tick',
   tickActive: 'atom-memory-tick-active',
   pin: 'atom-memory-pin',
-  memoryMdView: 'atom-memory-memory-md',
+  summaryView: 'atom-memory-summary-view',
   overlay: 'atom-memory-overlay',
   modal: 'atom-memory-modal',
   modalHeader: 'atom-memory-modal-header',
@@ -67,17 +60,16 @@ const css = {
 }
 import { LOCALE_NS, type MemorySettingsLocaleKey } from './locales.ts'
 import { ensureMemorySettingsStyle } from './styles.ts'
-import { parseSummary } from './summary-parse.ts'
 import {
-  INJECTED_MD_TOKEN_PRESETS,
-  nearestInjectedMdPresetIndex,
+  INJECTED_SUMMARY_TOKEN_PRESETS,
+  nearestInjectedSummaryPresetIndex,
 } from '../injection-budget.ts'
 import type {
   FactEditRow, MemorySettingsFace, MemorySettingsState, ProfileEditRow,
 } from './memory-settings-controller.ts'
 
 /** Locale key of each gear shown in the panel, smallest gear first. */
-const PRESET_LABEL_KEYS: Record<(typeof INJECTED_MD_TOKEN_PRESETS)[number], MemorySettingsLocaleKey> = {
+const PRESET_LABEL_KEYS: Record<(typeof INJECTED_SUMMARY_TOKEN_PRESETS)[number], MemorySettingsLocaleKey> = {
   300: 'injectPresetCompact',
   800: 'injectPresetStandard',
   1500: 'injectPresetDetailed',
@@ -202,11 +194,9 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   const [status, setStatus] = useState<string>()
   const [phase, setPhase] = useState<'idle' | 'busy'>('idle')
 
-  // Which modal is open: 'memoryMd' | 'summary' | 'facts' | 'profile' | undefined.
-  const [modal, setModal] = useState<'memoryMd' | 'summary' | 'facts' | 'profile'>()
-  // memory.md fetched content is held in state.data.memoryMd by the controller.
-  const [memoryMdBusy, setMemoryMdBusy] = useState(false)
-  // summary fetched content is held in state.data.summary by the controller.
+  // Which modal is open: 'summary' | 'facts' | 'profile' | undefined.
+  const [modal, setModal] = useState<'summary' | 'facts' | 'profile'>()
+  // Summary fetched content is held in state.data.summary by the controller.
   const [summaryBusy, setSummaryBusy] = useState(false)
 
   // "手动指定模型" selection: the settings document only stores
@@ -218,24 +208,16 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   )
 
   /** The committed injection budget (the Host clamps it on the way in). */
-  const tokens = state.section.injectedMemoryMdTokens
+  const tokens = state.section.injectedSummaryTokens
   // The slider is positioned by *gear index*, not by token count: the gears are
   // deliberately uneven (300 → 800 → 1500 → …), so a linear token axis would
   // bunch every small gear into the first few pixels and make the cheap end
   // impossible to hit. Off-ladder values (from the old free-text field, or from
   // the plugin composition) park the handle at the nearest gear, and the
   // read-out says so instead of silently pretending they are that gear.
-  const rungIndex = nearestInjectedMdPresetIndex(tokens)
-  const rung = INJECTED_MD_TOKEN_PRESETS[rungIndex]!
+  const rungIndex = nearestInjectedSummaryPresetIndex(tokens)
+  const rung = INJECTED_SUMMARY_TOKEN_PRESETS[rungIndex]!
   const offGrid = rung !== tokens
-
-  const openMemoryMd = (): void => {
-    setModal('memoryMd')
-    if (state.data.memoryMd === undefined) {
-      setMemoryMdBusy(true)
-      void props.fetchMemoryMd().finally(() => setMemoryMdBusy(false))
-    }
-  }
 
   const openSummary = (): void => {
     setModal('summary')
@@ -303,19 +285,19 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
             className={css.slider}
             type="range"
             min={0}
-            max={INJECTED_MD_TOKEN_PRESETS.length - 1}
+            max={INJECTED_SUMMARY_TOKEN_PRESETS.length - 1}
             step={1}
             value={rungIndex}
             // The gear names are the only meaningful reading of the handle
             // position, so hand assistive tech the label rather than an index.
             aria-valuetext={t(PRESET_LABEL_KEYS[rung], { tokens: String(rung) })}
             onChange={(e) => {
-              const next = INJECTED_MD_TOKEN_PRESETS[Number(e.currentTarget.value)]
-              if (next !== undefined) void props.setInjectedMemoryMdTokens(next)
+              const next = INJECTED_SUMMARY_TOKEN_PRESETS[Number(e.currentTarget.value)]
+              if (next !== undefined) void props.setInjectedSummaryTokens(next)
             }}
           />
           <div className={css.ticks}>
-            {INJECTED_MD_TOKEN_PRESETS.map((preset, i) => (
+            {INJECTED_SUMMARY_TOKEN_PRESETS.map((preset, i) => (
               <span key={preset} className={i === rungIndex ? css.tickActive : css.tick}>{preset}</span>
             ))}
           </div>
@@ -325,7 +307,7 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
               : t(PRESET_LABEL_KEYS[rung], { tokens: String(rung) })}
           </p>
           <p className={css.hint}>
-            {t('injectSliderHint', { rungs: INJECTED_MD_TOKEN_PRESETS.join(' / ') })}
+            {t('injectSliderHint', { rungs: INJECTED_SUMMARY_TOKEN_PRESETS.join(' / ') })}
           </p>
         </div>
         <p className={css.hint}>{t('injectHint', { tokens: String(tokens) })}</p>
@@ -425,21 +407,13 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
         <p className={css.hint}>{t('modelHint')}</p>
       </fieldset>
 
-      {/* 4) 记忆内容 group: memory.md view + summary view + user profile + memory & facts
+      {/* 4) 记忆内容 group: summary view + user profile + memory & facts
            share one region; each action is a button in a horizontal row whose explanation
            appears as a CSS hover tooltip (not inline text). */}
       <fieldset className={css.group} disabled={busy}>
         <legend className={css.groupTitle}>{t('contentGroupHeader')}</legend>
         <div className={css.contentActions}>
-          {/* memory.md view — read-only injected snapshot in a modal */}
-          <div className={css.toggle}>
-            <button type="button" className={css.btn} disabled={busy || memoryMdBusy} onClick={openMemoryMd}>
-              {t('memoryMdOpen')}
-            </button>
-            <div className={css.tooltip}>{t('memoryMdDesc')}</div>
-          </div>
-
-          {/* memory summary — read-only aggregate digest in a modal */}
+          {/* summary — read-only view of the injected system-prompt memory */}
           <div className={css.toggle}>
             <button type="button" className={css.btn} disabled={busy || summaryBusy} onClick={openSummary}>
               {t('summaryOpen')}
@@ -511,14 +485,6 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
       </fieldset>
 
       {/* ===== modals ===== */}
-      {modal === 'memoryMd' ? (
-        <MemoryMdModal
-          t={t}
-          busy={memoryMdBusy}
-          content={state.data.memoryMd}
-          onClose={() => setModal(undefined)}
-        />
-      ) : null}
       {modal === 'summary' ? (
         <SummaryModal
           t={t}
@@ -579,26 +545,7 @@ function Modal(props: {
   )
 }
 
-/** The memory.md viewer modal (read-only). */
-function MemoryMdModal(props: {
-  t: RowTranslate
-  busy: boolean
-  content?: string
-  onClose: () => void
-}) {
-  const { t, busy, content, onClose } = props
-  return (
-    <Modal t={t} title={t('memoryMdHeader')} onClose={onClose}>
-      {busy && content === undefined
-        ? <p className={css.hint}>{t('memoryMdLoading')}</p>
-        : content === undefined
-          ? <p className={css.empty}>{t('memoryMdEmpty')}</p>
-          : <pre className={css.memoryMdView}>{content}</pre>}
-    </Modal>
-  )
-}
-
-/** The memory summary viewer modal (read-only, rendered as a structured list). */
+/** The summary viewer modal (read-only, renders the injected markdown). */
 function SummaryModal(props: {
   t: RowTranslate
   busy: boolean
@@ -606,35 +553,13 @@ function SummaryModal(props: {
   onClose: () => void
 }) {
   const { t, busy, content, onClose } = props
-  // Parse the Host summary markdown into readable sections + items. The body is
-  // a single `；`-joined line per `##` scope, so splitting it lists each
-  // attribute / preference / workflow / event / knowledge clause instead of
-  // dumping the raw markdown.
-  const parsed = content !== undefined ? parseSummary(content) : undefined
-
   return (
     <Modal t={t} title={t('summaryHeader')} onClose={onClose}>
       {busy && content === undefined
         ? <p className={css.hint}>{t('summaryLoading')}</p>
-        : content === undefined || (parsed && parsed.empty)
+        : content === undefined
           ? <p className={css.empty}>{t('summaryEmpty')}</p>
-          : (
-            <div className={css.summaryList}>
-              {parsed!.sections.map((sec) => (
-                <div className={css.summarySection} key={`${sec.theme}:${sec.version ?? ''}`}>
-                  <div className={css.summarySectionTitle}>
-                    <span>{sec.theme}</span>
-                    {sec.version ? <span className={css.summaryVersion}>{sec.version}</span> : null}
-                  </div>
-                  <ul className={css.summaryItems}>
-                    {sec.items.map((item, i) => <li key={i}>{item}</li>)}
-                  </ul>
-                  {sec.note ? <p className={css.summaryNote}>{sec.note}</p> : null}
-                  {sec.coverage ? <p className={css.summaryCoverage}>{sec.coverage}</p> : null}
-                </div>
-              ))}
-            </div>
-          )}
+          : <pre className={css.summaryView}>{content}</pre>}
     </Modal>
   )
 }

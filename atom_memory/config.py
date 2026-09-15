@@ -29,14 +29,12 @@ class MemConfig:
             ``float[...]`` width and the chosen model.
         default_token_budget: Default token budget used by :meth:`recall`
             when the caller does not supply an explicit budget.
-        memory_md_token_limit: Default token cap for the generated
-            memory markdown.
+        summary_token_limit: Default token cap for the generated
+            summary markdown.
         user_md_token_limit: Default token cap for the generated user-profile
             markdown.
         candidate_retention_days: Number of days an unresolved fact candidate
             is kept before it may be garbage collected.
-        summary_rebuild_debounce_sec: Minimum seconds that must elapse between
-            marking a summary stale and rebuilding it.
         max_retries: Maximum number of times the worker retries a failed task.
         worker_poll_interval_sec: Interval (seconds) at which the worker polls
             the task queue.
@@ -53,10 +51,9 @@ class MemConfig:
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_dim: int = 512
     default_token_budget: int = 2000
-    memory_md_token_limit: int = 1500
+    summary_token_limit: int = 1500
     user_md_token_limit: int = 800
     candidate_retention_days: int = 7
-    summary_rebuild_debounce_sec: int = 30
     max_retries: int = 3
     worker_poll_interval_sec: float = 0.5
     llm_extractor: Optional[Callable[..., list]] = field(default=None)

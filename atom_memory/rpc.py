@@ -68,9 +68,8 @@ _METHODS: Dict[str, str] = {
     "recall": "recall",
     "replace": "replace",
     "forget": "forget",
-    "memory_md": "memory_md",
-    "user_md": "user_md",
     "summary": "summary",
+    "user_md": "user_md",
     "stats": "stats",
     # UI-facing edit / backup / restore surface.
     "list_facts": "list_facts",

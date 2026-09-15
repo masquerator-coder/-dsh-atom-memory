@@ -108,7 +108,7 @@ def test_add_enqueues_and_recall_after_start(proc, tmp_path):
     _send(p, 3, "recall", {"user_id": "u1", "query": "咖啡"})
     resp = _recv(p)
     assert resp["ok"] is True
-    for key in ("facts", "summaries", "pending", "token_count", "trace_id"):
+    for key in ("facts", "pending", "token_count", "trace_id"):
         assert key in resp["result"]
 
 

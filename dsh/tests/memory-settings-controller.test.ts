@@ -12,9 +12,9 @@ import {
   type MemorySettingsSection,
 } from '../src/client/memory-settings-controller.ts'
 import {
-  DEFAULT_INJECTED_MD_TOKENS,
-  MAX_INJECTED_MD_TOKENS,
-  MIN_INJECTED_MD_TOKENS,
+  DEFAULT_INJECTED_SUMMARY_TOKENS,
+  MAX_INJECTED_SUMMARY_TOKENS,
+  MIN_INJECTED_SUMMARY_TOKENS,
 } from '../src/injection-budget.ts'
 
 function snapshot(over: Partial<SettingsScopeSnapshot<MemorySettingsSection>>): SettingsScopeSnapshot<MemorySettingsSection> {
@@ -25,7 +25,7 @@ function snapshot(over: Partial<SettingsScopeSnapshot<MemorySettingsSection>>): 
       captureEnabled: true,
       llmExtractionEnabled: true,
       contextInjectionEnabled: true,
-      injectedMemoryMdTokens: DEFAULT_INJECTED_MD_TOKENS,
+      injectedSummaryTokens: DEFAULT_INJECTED_SUMMARY_TOKENS,
       extractionModel: undefined,
       ...(over.value as Partial<MemorySettingsSection> | undefined),
     },
@@ -57,10 +57,9 @@ function fakeRemote() {
   const listFacts = vi.fn(async (): Promise<{ ok: boolean; value: { facts: Array<{ fact_id: string; subject: string; predicate: string; object: string }>; total: number } }> => ({ ok: true, value: { facts: [], total: 0 } }))
   const listProfile = vi.fn(async () => ({ ok: true, value: { profile: [] } }))
   const deleteFact = vi.fn(async () => ({ ok: true, value: {} }))
-  const memoryMd = vi.fn(async () => ({ ok: true, value: '# memory.md\ntest' }))
-  const summary = vi.fn(async () => ({ ok: true, value: '# 摘要 (Summary) — global\n属性: 工程师' }))
-  const remote: Record<string, unknown> = { listFacts, editFact: vi.fn(async () => ({ ok: true, value: {} })), deleteFact, memoryMd, summary, listProfile, upsertProfile: vi.fn(async () => ({ ok: true, value: {} })), deleteProfile: vi.fn(async () => ({ ok: true, value: {} })), backup, restore }
-  return { remote, backup, restore, listFacts, listProfile, deleteFact, memoryMd, summary }
+  const summary = vi.fn(async () => ({ ok: true, value: '# 记忆摘要 (Summary) — global\n决策规则\n- 一条规则' }))
+  const remote: Record<string, unknown> = { listFacts, editFact: vi.fn(async () => ({ ok: true, value: {} })), deleteFact, summary, listProfile, upsertProfile: vi.fn(async () => ({ ok: true, value: {} })), deleteProfile: vi.fn(async () => ({ ok: true, value: {} })), backup, restore }
+  return { remote, backup, restore, listFacts, listProfile, deleteFact, summary }
 }
 
 describe('MemorySettingsController', () => {
@@ -118,24 +117,24 @@ describe('MemorySettingsController', () => {
     const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, [])
     const face = controller.inject()
 
-    await face.setInjectedMemoryMdTokens(1200)
-    expect(set).toHaveBeenCalledWith('injectedMemoryMdTokens', 1200)
+    await face.setInjectedSummaryTokens(1200)
+    expect(set).toHaveBeenCalledWith('injectedSummaryTokens', 1200)
 
     // The panel may hand over anything a text field produced; the controller is
     // the last line of defence before the Host (which clamps again).
-    await face.setInjectedMemoryMdTokens(Number.NaN)
-    expect(set).toHaveBeenCalledWith('injectedMemoryMdTokens', DEFAULT_INJECTED_MD_TOKENS)
-    await face.setInjectedMemoryMdTokens(-5)
-    expect(set).toHaveBeenCalledWith('injectedMemoryMdTokens', MIN_INJECTED_MD_TOKENS)
-    await face.setInjectedMemoryMdTokens(9_999_999)
-    expect(set).toHaveBeenCalledWith('injectedMemoryMdTokens', MAX_INJECTED_MD_TOKENS)
+    await face.setInjectedSummaryTokens(Number.NaN)
+    expect(set).toHaveBeenCalledWith('injectedSummaryTokens', DEFAULT_INJECTED_SUMMARY_TOKENS)
+    await face.setInjectedSummaryTokens(-5)
+    expect(set).toHaveBeenCalledWith('injectedSummaryTokens', MIN_INJECTED_SUMMARY_TOKENS)
+    await face.setInjectedSummaryTokens(9_999_999)
+    expect(set).toHaveBeenCalledWith('injectedSummaryTokens', MAX_INJECTED_SUMMARY_TOKENS)
   })
 
   it('defaults a missing injection budget instead of exposing undefined', () => {
-    const { scope } = fakeScope(snapshot({ value: { injectedMemoryMdTokens: undefined } as never }))
+    const { scope } = fakeScope(snapshot({ value: { injectedSummaryTokens: undefined } as never }))
     const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, [])
-    expect(controller.inject().hooks.memorySettings.getSnapshot().section.injectedMemoryMdTokens)
-      .toBe(DEFAULT_INJECTED_MD_TOKENS)
+    expect(controller.inject().hooks.memorySettings.getSnapshot().section.injectedSummaryTokens)
+      .toBe(DEFAULT_INJECTED_SUMMARY_TOKENS)
   })
 
   it('calls the Remote namespace for backup and restore', async () => {
@@ -197,26 +196,15 @@ describe('MemorySettingsController', () => {
     expect(deleteFact).toHaveBeenCalledWith({ user: 'global', fact_id: 'f1' })
   })
 
-  it('fetches and stores the rendered memory.md view', async () => {
-    const { scope } = fakeScope(snapshot({}))
-    const { remote, memoryMd } = fakeRemote()
-    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
-    const face = controller.inject()
-    const text = await face.fetchMemoryMd()
-    expect(memoryMd).toHaveBeenCalledWith({ user: 'global' })
-    expect(text).toBe('# memory.md\ntest')
-    expect(face.hooks.memorySettings.getSnapshot().data.memoryMd).toBe('# memory.md\ntest')
-  })
-
-  it('fetches and stores the rendered aggregate summary', async () => {
+  it('fetches and stores the rendered summary view', async () => {
     const { scope } = fakeScope(snapshot({}))
     const { remote, summary } = fakeRemote()
     const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
     const face = controller.inject()
     const text = await face.fetchSummary()
     expect(summary).toHaveBeenCalledWith({ user: 'global' })
-    expect(text).toBe('# 摘要 (Summary) — global\n属性: 工程师')
-    expect(face.hooks.memorySettings.getSnapshot().data.summary).toBe('# 摘要 (Summary) — global\n属性: 工程师')
+    expect(text).toBe('# 记忆摘要 (Summary) — global\n决策规则\n- 一条规则')
+    expect(face.hooks.memorySettings.getSnapshot().data.summary).toBe('# 记忆摘要 (Summary) — global\n决策规则\n- 一条规则')
   })
 
   it('batch-saves a facts table: edits non-deleted rows, deletes marked rows, one refresh', async () => {

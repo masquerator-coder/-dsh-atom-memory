@@ -13,7 +13,7 @@
  * mutable surface small and auditable.
  */
 
-import { clampInjectedMdTokens } from './injection-budget.ts'
+import { clampInjectedSummaryTokens } from './injection-budget.ts'
 
 export interface ExtractionModelOverride {
   /** Manual provider id (e.g. `deepseek`) or a free-form label for a custom endpoint. */
@@ -47,7 +47,7 @@ export interface LiveRuntime {
    * its snapshot — sessions already frozen keep their byte-identical text, so
    * the prompt prefix (and the provider's KV cache) stays valid.
    */
-  injectedMemoryMdTokens: number
+  injectedSummaryTokens: number
   /** Manual LLM extraction model override; empty provider+model = follow dsh default. */
   extractionModel?: ExtractionModelOverride
 }
@@ -64,7 +64,7 @@ export function createRuntime(seed: LiveRuntimeSeed): LiveRuntime {
     captureEnabled: seed.captureEnabled ?? true,
     llmExtractionEnabled: seed.llmExtractionEnabled ?? true,
     contextInjectionEnabled: seed.contextInjectionEnabled ?? true,
-    injectedMemoryMdTokens: clampInjectedMdTokens(seed.injectedMemoryMdTokens),
+    injectedSummaryTokens: clampInjectedSummaryTokens(seed.injectedSummaryTokens),
     extractionModel: seed.extractionModel,
   }
 }
@@ -99,7 +99,7 @@ export class Runtime {
     // subscribes to re-wire it. It is read at each snapshot freeze (see
     // context.ts), which is exactly the moment a larger/smaller budget should
     // take effect, so no notification is needed.
-    this.value = { ...next, injectedMemoryMdTokens: clampInjectedMdTokens(next.injectedMemoryMdTokens) }
+    this.value = { ...next, injectedSummaryTokens: clampInjectedSummaryTokens(next.injectedSummaryTokens) }
     if (changed) {
       for (const listener of this.listeners) listener()
     }

@@ -8,9 +8,9 @@ describe('Config defaults', () => {
     expect(Config({}).extractionMaxTokens).toBe(2048)
   })
 
-  it('keeps snapshot injection on and memory.md budget at 1500 by default', () => {
+  it('keeps snapshot injection on and summary budget at 1500 by default', () => {
     const c = Config({})
     expect(c.contextInjectionEnabled).toBe(true)
-    expect(c.memoryMdTokens).toBe(1500)
+    expect(c.summaryTokens).toBe(1500)
   })
 })

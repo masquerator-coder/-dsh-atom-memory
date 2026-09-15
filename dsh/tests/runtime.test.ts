@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createRuntime, Runtime } from '../src/runtime.ts'
 import {
-  DEFAULT_INJECTED_MD_TOKENS,
-  INJECTED_MD_TOKEN_PRESETS,
-  MAX_INJECTED_MD_TOKENS,
-  MIN_INJECTED_MD_TOKENS,
-  clampInjectedMdTokens,
-  nearestInjectedMdPresetIndex,
+  DEFAULT_INJECTED_SUMMARY_TOKENS,
+  INJECTED_SUMMARY_TOKEN_PRESETS,
+  MAX_INJECTED_SUMMARY_TOKENS,
+  MIN_INJECTED_SUMMARY_TOKENS,
+  clampInjectedSummaryTokens,
+  nearestInjectedSummaryPresetIndex,
 } from '../src/injection-budget.ts'
 
 describe('createRuntime', () => {
@@ -17,7 +17,7 @@ describe('createRuntime', () => {
       captureEnabled: true,
       llmExtractionEnabled: true,
       contextInjectionEnabled: true,
-      injectedMemoryMdTokens: DEFAULT_INJECTED_MD_TOKENS,
+      injectedSummaryTokens: DEFAULT_INJECTED_SUMMARY_TOKENS,
     })
   })
 
@@ -27,63 +27,63 @@ describe('createRuntime', () => {
   })
 
   it('carries a configured injection budget, clamped', () => {
-    expect(createRuntime({ injectedMemoryMdTokens: 1200 }).injectedMemoryMdTokens).toBe(1200)
-    expect(createRuntime({ injectedMemoryMdTokens: 0 }).injectedMemoryMdTokens)
-      .toBe(MIN_INJECTED_MD_TOKENS)
+    expect(createRuntime({ injectedSummaryTokens: 1200 }).injectedSummaryTokens).toBe(1200)
+    expect(createRuntime({ injectedSummaryTokens: 0 }).injectedSummaryTokens)
+      .toBe(MIN_INJECTED_SUMMARY_TOKENS)
   })
 })
 
-describe('clampInjectedMdTokens', () => {
+describe('clampInjectedSummaryTokens', () => {
   it('keeps an in-range integer as-is', () => {
-    expect(clampInjectedMdTokens(800)).toBe(800)
-    expect(clampInjectedMdTokens(1200.7)).toBe(1200)
+    expect(clampInjectedSummaryTokens(800)).toBe(800)
+    expect(clampInjectedSummaryTokens(1200.7)).toBe(1200)
   })
 
   it('snaps out-of-range values to the nearest bound', () => {
-    expect(clampInjectedMdTokens(MIN_INJECTED_MD_TOKENS - 1)).toBe(MIN_INJECTED_MD_TOKENS)
-    expect(clampInjectedMdTokens(0)).toBe(MIN_INJECTED_MD_TOKENS)
-    expect(clampInjectedMdTokens(-100)).toBe(MIN_INJECTED_MD_TOKENS)
-    expect(clampInjectedMdTokens(MAX_INJECTED_MD_TOKENS + 1)).toBe(MAX_INJECTED_MD_TOKENS)
+    expect(clampInjectedSummaryTokens(MIN_INJECTED_SUMMARY_TOKENS - 1)).toBe(MIN_INJECTED_SUMMARY_TOKENS)
+    expect(clampInjectedSummaryTokens(0)).toBe(MIN_INJECTED_SUMMARY_TOKENS)
+    expect(clampInjectedSummaryTokens(-100)).toBe(MIN_INJECTED_SUMMARY_TOKENS)
+    expect(clampInjectedSummaryTokens(MAX_INJECTED_SUMMARY_TOKENS + 1)).toBe(MAX_INJECTED_SUMMARY_TOKENS)
   })
 
   it('falls back to the default for anything unusable', () => {
     // A malformed settings document must not break prompt assembly.
-    expect(clampInjectedMdTokens(undefined)).toBe(DEFAULT_INJECTED_MD_TOKENS)
-    expect(clampInjectedMdTokens(null)).toBe(DEFAULT_INJECTED_MD_TOKENS)
-    expect(clampInjectedMdTokens('abc')).toBe(DEFAULT_INJECTED_MD_TOKENS)
-    expect(clampInjectedMdTokens(Number.NaN)).toBe(DEFAULT_INJECTED_MD_TOKENS)
-    expect(clampInjectedMdTokens(Number.POSITIVE_INFINITY)).toBe(DEFAULT_INJECTED_MD_TOKENS)
+    expect(clampInjectedSummaryTokens(undefined)).toBe(DEFAULT_INJECTED_SUMMARY_TOKENS)
+    expect(clampInjectedSummaryTokens(null)).toBe(DEFAULT_INJECTED_SUMMARY_TOKENS)
+    expect(clampInjectedSummaryTokens('abc')).toBe(DEFAULT_INJECTED_SUMMARY_TOKENS)
+    expect(clampInjectedSummaryTokens(Number.NaN)).toBe(DEFAULT_INJECTED_SUMMARY_TOKENS)
+    expect(clampInjectedSummaryTokens(Number.POSITIVE_INFINITY)).toBe(DEFAULT_INJECTED_SUMMARY_TOKENS)
   })
 
   it('accepts a numeric string (a text field submits strings)', () => {
-    expect(clampInjectedMdTokens('900')).toBe(900)
+    expect(clampInjectedSummaryTokens('900')).toBe(900)
   })
 })
 
-describe('nearestInjectedMdPresetIndex', () => {
+describe('nearestInjectedSummaryPresetIndex', () => {
   it('returns the exact gear of an on-ladder budget', () => {
-    INJECTED_MD_TOKEN_PRESETS.forEach((preset, index) => {
-      expect(nearestInjectedMdPresetIndex(preset)).toBe(index)
+    INJECTED_SUMMARY_TOKEN_PRESETS.forEach((preset, index) => {
+      expect(nearestInjectedSummaryPresetIndex(preset)).toBe(index)
     })
-    expect(nearestInjectedMdPresetIndex(DEFAULT_INJECTED_MD_TOKENS))
-      .toBe(INJECTED_MD_TOKEN_PRESETS.indexOf(DEFAULT_INJECTED_MD_TOKENS))
+    expect(nearestInjectedSummaryPresetIndex(DEFAULT_INJECTED_SUMMARY_TOKENS))
+      .toBe(INJECTED_SUMMARY_TOKEN_PRESETS.indexOf(DEFAULT_INJECTED_SUMMARY_TOKENS))
   })
 
   it('parks an off-ladder budget at the closest gear', () => {
     // 1200 is nearer 1500 than 800; 1000 is nearer 800.
-    expect(nearestInjectedMdPresetIndex(1200)).toBe(2)
-    expect(nearestInjectedMdPresetIndex(1000)).toBe(1)
+    expect(nearestInjectedSummaryPresetIndex(1200)).toBe(2)
+    expect(nearestInjectedSummaryPresetIndex(1000)).toBe(1)
     // Above the ladder it parks on the top gear, below it on the bottom one.
-    expect(nearestInjectedMdPresetIndex(MAX_INJECTED_MD_TOKENS))
-      .toBe(INJECTED_MD_TOKEN_PRESETS.length - 1)
-    expect(nearestInjectedMdPresetIndex(0)).toBe(0)
+    expect(nearestInjectedSummaryPresetIndex(MAX_INJECTED_SUMMARY_TOKENS))
+      .toBe(INJECTED_SUMMARY_TOKEN_PRESETS.length - 1)
+    expect(nearestInjectedSummaryPresetIndex(0)).toBe(0)
   })
 
   it('falls back to the default gear for unusable values', () => {
-    const defaultIndex = INJECTED_MD_TOKEN_PRESETS.indexOf(DEFAULT_INJECTED_MD_TOKENS)
-    expect(nearestInjectedMdPresetIndex(Number.NaN)).toBe(defaultIndex)
-    expect(nearestInjectedMdPresetIndex(undefined)).toBe(defaultIndex)
-    expect(nearestInjectedMdPresetIndex('abc')).toBe(defaultIndex)
+    const defaultIndex = INJECTED_SUMMARY_TOKEN_PRESETS.indexOf(DEFAULT_INJECTED_SUMMARY_TOKENS)
+    expect(nearestInjectedSummaryPresetIndex(Number.NaN)).toBe(defaultIndex)
+    expect(nearestInjectedSummaryPresetIndex(undefined)).toBe(defaultIndex)
+    expect(nearestInjectedSummaryPresetIndex('abc')).toBe(defaultIndex)
   })
 })
 
@@ -123,14 +123,14 @@ describe('Runtime', () => {
     const runtime = new Runtime(createRuntime({}))
     const listener = vi.fn()
     runtime.subscribe(listener)
-    runtime.set({ ...runtime.get(), injectedMemoryMdTokens: 300 })
-    expect(runtime.get().injectedMemoryMdTokens).toBe(300)
+    runtime.set({ ...runtime.get(), injectedSummaryTokens: 300 })
+    expect(runtime.get().injectedSummaryTokens).toBe(300)
     expect(listener).not.toHaveBeenCalled()
   })
 
   it('clamps a budget written straight through set()', () => {
     const runtime = new Runtime(createRuntime({}))
-    runtime.set({ ...runtime.get(), injectedMemoryMdTokens: Number.NaN })
-    expect(runtime.get().injectedMemoryMdTokens).toBe(DEFAULT_INJECTED_MD_TOKENS)
+    runtime.set({ ...runtime.get(), injectedSummaryTokens: Number.NaN })
+    expect(runtime.get().injectedSummaryTokens).toBe(DEFAULT_INJECTED_SUMMARY_TOKENS)
   })
 })

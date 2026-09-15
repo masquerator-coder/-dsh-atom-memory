@@ -676,14 +676,14 @@ def _insert_md_fact(conn, fact_id: str, obj: str, importance: float = 0.5):
     conn.commit()
 
 
-def test_memory_md_orders_by_reinforced_strength(conn):
+def test_summary_orders_by_reinforced_strength(conn):
     """Reuse must reach the injected digest, not only the retrieval ranker.
 
-    ``memory.md`` is what is frozen into the system prompt at session start, so a
+    ``summary`` is what is frozen into the system prompt at session start, so a
     reinforcement mechanism that never touches it would be invisible on the one
     surface that is always paid for.
     """
-    from atom_memory.memory_md import generate_memory_md
+    from atom_memory.summary import generate_summary
 
     _insert_md_fact(conn, "f_used", "黑咖啡", importance=0.6)
     _insert_md_fact(conn, "f_idle", "奶茶", importance=0.6)
@@ -693,14 +693,14 @@ def test_memory_md_orders_by_reinforced_strength(conn):
         conn, "f_used", "u1", "s2", KIND_USER_CONFIRMED, event_at=T0 + HOUR_MS
     )
 
-    md = generate_memory_md(conn, "u1", max_tokens=2000, detail=True)
+    md = generate_summary(conn, "u1", max_tokens=2000, detail=True)
     assert md.index("黑咖啡") < md.index("奶茶"), "reinforcement did not reorder"
 
 
-def test_memory_md_reinforcement_fades_with_time(conn):
+def test_summary_reinforcement_fades_with_time(conn):
     """The digest must decay reuse too, or it ages differently from retrieval."""
     from atom_memory.db import now_ms
-    from atom_memory.memory_md import _collect
+    from atom_memory.summary import _collect
 
     _insert_md_fact(conn, "f_used", "黑咖啡", importance=0.6)
     now = now_ms()
@@ -720,9 +720,9 @@ def test_memory_md_reinforcement_fades_with_time(conn):
     assert rank_now > rank_fresh + 0.1
 
 
-def test_memory_md_keeps_the_neutral_importance_fallback(conn):
+def test_summary_keeps_the_neutral_importance_fallback(conn):
     """Reinforcement must not break "0.5 means unknown, use the type rank"."""
-    from atom_memory.memory_md import _collect
+    from atom_memory.summary import _collect
 
     # decision_rule has a higher type default than semantic; both store the
     # neutral 0.5, so the type default must decide — before and after

@@ -11,7 +11,7 @@ window.__ModuleLoader__.load({
 		* Upper bound. Far above any sane working set, but it exists so a typo (or a
 		* pasted number) cannot silently inflate every request of every session.
 		*/
-		const MAX_INJECTED_MD_TOKENS = 2e4;
+		const MAX_INJECTED_SUMMARY_TOKENS = 2e4;
 		/**
 		* The gear ladder the settings panel's slider snaps to, smallest first.
 		*
@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
 		* whole store" (12000); the budget is a *cap*, not a target, so a large gear
 		* costs nothing while the store is smaller than it.
 		*/
-		const INJECTED_MD_TOKEN_PRESETS = [
+		const INJECTED_SUMMARY_TOKEN_PRESETS = [
 			300,
 			800,
 			1500,
@@ -42,14 +42,14 @@ window.__ModuleLoader__.load({
 		* the default's gear rather than to `NaN`.
 		*
 		* @param value - The configured budget, from settings or the composition entry.
-		* @returns A valid index into {@link INJECTED_MD_TOKEN_PRESETS}.
+		* @returns A valid index into {@link INJECTED_SUMMARY_TOKEN_PRESETS}.
 		*/
-		function nearestInjectedMdPresetIndex(value) {
-			const tokens = clampInjectedMdTokens(value);
+		function nearestInjectedSummaryPresetIndex(value) {
+			const tokens = clampInjectedSummaryTokens(value);
 			let best = 0;
 			let bestDelta = Number.POSITIVE_INFINITY;
-			for (let i = 0; i < INJECTED_MD_TOKEN_PRESETS.length; i += 1) {
-				const delta = Math.abs(INJECTED_MD_TOKEN_PRESETS[i] - tokens);
+			for (let i = 0; i < INJECTED_SUMMARY_TOKEN_PRESETS.length; i += 1) {
+				const delta = Math.abs(INJECTED_SUMMARY_TOKEN_PRESETS[i] - tokens);
 				if (delta < bestDelta) {
 					bestDelta = delta;
 					best = i;
@@ -74,13 +74,13 @@ window.__ModuleLoader__.load({
 		* @param value - The candidate budget, from settings or the composition entry.
 		* @returns An integer within `[MIN, MAX]`; the default when not provided.
 		*/
-		function clampInjectedMdTokens(value) {
+		function clampInjectedSummaryTokens(value) {
 			if (value === void 0 || value === null) return 800;
 			if (typeof value === "string" && value.trim() === "") return 800;
 			const tokens = Math.trunc(Number(value));
 			if (!Number.isFinite(tokens)) return 800;
 			if (tokens < 100) return 100;
-			if (tokens > 2e4) return MAX_INJECTED_MD_TOKENS;
+			if (tokens > 2e4) return MAX_INJECTED_SUMMARY_TOKENS;
 			return tokens;
 		}
 		//#endregion
@@ -105,7 +105,7 @@ window.__ModuleLoader__.load({
 					captureEnabled: true,
 					llmExtractionEnabled: true,
 					contextInjectionEnabled: true,
-					injectedMemoryMdTokens: 800,
+					injectedSummaryTokens: 800,
 					extractionModel: void 0
 				},
 				data: {
@@ -125,7 +125,7 @@ window.__ModuleLoader__.load({
 				return {
 					hooks: { memorySettings: this.store },
 					setEnabled: (enabled) => this.scope.set("enabled", enabled),
-					setInjectedMemoryMdTokens: (tokens) => this.scope.set("injectedMemoryMdTokens", clampInjectedMdTokens(tokens)),
+					setInjectedSummaryTokens: (tokens) => this.scope.set("injectedSummaryTokens", clampInjectedSummaryTokens(tokens)),
 					setExtractionModel: (provider, model) => this.scope.set("extractionModel", {
 						provider,
 						model
@@ -134,7 +134,6 @@ window.__ModuleLoader__.load({
 					refreshData: () => this.refreshData(),
 					saveFact: (fact) => this.saveFact(fact),
 					deleteFact: (factId) => this.deleteFact(factId),
-					fetchMemoryMd: () => this.fetchMemoryMd(),
 					fetchSummary: () => this.fetchSummary(),
 					upsertProfile: (section, key, value, pinned) => this.upsertProfile(section, key, value, pinned),
 					deleteProfile: (section, key) => this.deleteProfile(section, key),
@@ -215,26 +214,6 @@ window.__ModuleLoader__.load({
 						...this.store.getSnapshot(),
 						lastError: err?.message ?? String(err)
 					});
-				}
-			}
-			async fetchMemoryMd() {
-				try {
-					const text = unwrap(await this.r().memoryMd({ user: USER }));
-					this.store.set({
-						...this.store.getSnapshot(),
-						data: {
-							...this.store.getSnapshot().data,
-							memoryMd: text
-						},
-						lastError: void 0
-					});
-					return text;
-				} catch (err) {
-					this.store.set({
-						...this.store.getSnapshot(),
-						lastError: err?.message ?? String(err)
-					});
-					throw err;
 				}
 			}
 			async fetchSummary() {
@@ -356,7 +335,7 @@ window.__ModuleLoader__.load({
 				captureEnabled: value.captureEnabled ?? true,
 				llmExtractionEnabled: value.llmExtractionEnabled ?? true,
 				contextInjectionEnabled: value.contextInjectionEnabled ?? true,
-				injectedMemoryMdTokens: clampInjectedMdTokens(value.injectedMemoryMdTokens),
+				injectedSummaryTokens: clampInjectedSummaryTokens(value.injectedSummaryTokens),
 				extractionModel: value.extractionModel
 			};
 		}
@@ -366,7 +345,7 @@ window.__ModuleLoader__.load({
 				intro: "管理 dsh-atom-memory 的记忆能力：开关、抽取模型、用户画像、记忆内容与备份恢复。",
 				masterHeader: "记忆开关",
 				masterDesc: "关闭后停用记忆插件：不再捕获、不再注入上下文，记忆工具也会拒绝调用。打开即时恢复。",
-				injectHeader: "系统提示词注入体积（memory.md）",
+				injectHeader: "系统提示词注入体积（记忆摘要）",
 				injectSliderLabel: "挡位",
 				injectPresetCompact: "精简 · {tokens} tokens",
 				injectPresetStandard: "标准 · {tokens} tokens",
@@ -394,8 +373,8 @@ window.__ModuleLoader__.load({
 				modelApiKeyPlaceholder: "sk-...",
 				modelHint: "选择“手动指定模型”后可填 Provider ID 与 Model（跟随默认时留空）；填了 API 地址则由插件直连该 OpenAI 兼容端点，否则走 dsh 默认模型。",
 				contentGroupHeader: "记忆内容",
-				summaryHeader: "记忆摘要",
-				summaryDesc: "只读展示记忆的聚合摘要——把稳定属性、偏好、工作流、近期事件与轻知识压缩成一份可快速通读的紧凑摘要（有损），需要精确定位某条事实时再用 memory_recall 检索。",
+				summaryHeader: "记忆摘要（注入视图）",
+				summaryDesc: "只读展示注入会话系统提示词的那份紧凑记忆摘要——按类型分组、按重要度排序、不含 fact_id，与模型看到的文本一致。若要拿到 fact_id 定位某条事实，请用 memory_summary_detail 工具查看完整清单。",
 				summaryOpen: "查看摘要",
 				summaryLoading: "正在加载…",
 				summaryEmpty: "暂无摘要（没有活跃事实）。",
@@ -432,12 +411,6 @@ window.__ModuleLoader__.load({
 				addRow: "添加一行",
 				close: "关闭",
 				saving: "保存中…",
-				memoryMdHeader: "memory.md 记忆视图（注入视图）",
-				memoryMdDesc: "只读展示注入会话系统提示词的那份紧凑记忆视图——按类型分组、按重要度排序、不含 fact_id，与模型看到的文本一致。若要拿到 fact_id 定位某条事实，请用 memory_memory_md 工具查看完整清单。",
-				memoryMdOpen: "查看 memory.md",
-				memoryMdClose: "收起",
-				memoryMdLoading: "正在加载…",
-				memoryMdEmpty: "暂无内容（可能是空记忆或尚未加载）。",
 				backupHeader: "记忆备份与恢复",
 				backupDesc: "把记忆导出为 JSON 文件，或从 JSON 文件导入恢复（replace 语义：覆盖当前记忆）。",
 				exportBtn: "导出 JSON",
@@ -450,7 +423,7 @@ window.__ModuleLoader__.load({
 				intro: "Manage dsh-atom-memory: master switch, extraction model, user profile, memory content, and backup/restore.",
 				masterHeader: "Memory switch",
 				masterDesc: "When off the memory plugin is disabled: no capture, no context injection, and memory tools refuse calls. Turning on restores immediately.",
-				injectHeader: "System-prompt injection size (memory.md)",
+				injectHeader: "System-prompt injection size (memory summary)",
 				injectSliderLabel: "Gear",
 				injectPresetCompact: "Compact · {tokens} tokens",
 				injectPresetStandard: "Standard · {tokens} tokens",
@@ -478,8 +451,8 @@ window.__ModuleLoader__.load({
 				modelApiKeyPlaceholder: "sk-...",
 				modelHint: "With “manual model” you can set Provider ID and Model (leave empty to follow default); filling in the API Base URL makes the plugin call that OpenAI-compatible endpoint directly, otherwise the dsh default model is used.",
 				contentGroupHeader: "Memory content",
-				summaryHeader: "Memory summary",
-				summaryDesc: "Read-only render of the aggregate memory summary — a compact, lossy digest of stable attributes, preferences, workflows, recent events and light knowledge, meant to be skimmed first; use memory_recall to drill into any specific fact.",
+				summaryHeader: "Memory summary (as injected)",
+				summaryDesc: "Read-only render of the compact memory summary injected into the session system prompt — grouped by type, ordered by importance, no fact_ids — i.e. exactly the text the model sees. For a full list carrying fact_ids (to locate one fact), use the memory_summary_detail tool.",
 				summaryOpen: "View summary",
 				summaryLoading: "Loading…",
 				summaryEmpty: "No summary yet (no active facts).",
@@ -516,12 +489,6 @@ window.__ModuleLoader__.load({
 				addRow: "Add row",
 				close: "Close",
 				saving: "Saving…",
-				memoryMdHeader: "memory.md memory view (as injected)",
-				memoryMdDesc: "Read-only render of the compact memory view injected into the session system prompt — grouped by type, ordered by importance, no fact_ids — i.e. exactly the text the model sees. For a full list carrying fact_ids (to locate one fact), use the memory_memory_md tool.",
-				memoryMdOpen: "View memory.md",
-				memoryMdClose: "Collapse",
-				memoryMdLoading: "Loading…",
-				memoryMdEmpty: "No content yet (empty memory or not loaded).",
 				backupHeader: "Backup & restore",
 				backupDesc: "Export memory to a JSON file, or import from a JSON file to restore (replace semantics: overwrites current memory).",
 				exportBtn: "Export JSON",
@@ -559,13 +526,6 @@ window.__ModuleLoader__.load({
 .atom-memory-toggle{position:relative;display:inline-flex}
 .atom-memory-toggle .atom-memory-tooltip{position:absolute;top:calc(100% + 8px);left:0;z-index:50;width:max-content;max-width:min(320px,80vw);padding:8px 11px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:8px;background:var(--dsw-alias-bg-layer-3,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:12px;line-height:1.55;box-shadow:0 10px 28px rgba(0,0,0,0.4);white-space:normal;opacity:0;visibility:hidden;pointer-events:none;transition:opacity 120ms ease,visibility 120ms ease}
 .atom-memory-toggle:hover .atom-memory-tooltip,.atom-memory-toggle:focus-within .atom-memory-tooltip{opacity:1;visibility:visible}
-/* Memory-summary modal: rendered as a structured list (not raw markdown). */
-.atom-memory-summary-list{display:flex;flex-direction:column;gap:12px}
-.atom-memory-summary-section{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:10px;background:var(--dsw-alias-bg-layer-2,#24262b)}
-.atom-memory-summary-section-title{display:flex;align-items:baseline;gap:8px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e8eb)}
-.atom-memory-summary-version{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;color:var(--dsw-alias-label-secondary,#8a8f98)}
-.atom-memory-summary-items{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:1.55;color:var(--dsw-alias-label-primary,#e6e8eb)}
-.atom-memory-summary-note,.atom-memory-summary-coverage{margin:0;padding-top:6px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,0.06));font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#8a8f98);white-space:pre-wrap;word-break:break-word}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
 /* Master-switch sliding toggle: the native checkbox is visually hidden (kept
    focusable + accessible); the track + sliding thumb render the switch. */
@@ -594,7 +554,7 @@ window.__ModuleLoader__.load({
 .atom-memory-badge{font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;color:var(--dsw-alias-label-secondary,#8a8f98)}
 .atom-memory-fact-fields{display:flex;flex-wrap:wrap;gap:6px}
 .atom-memory-row-actions{display:flex;gap:8px;justify-content:flex-end}
-.atom-memory-memory-md{max-height:320px;overflow:auto;margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:12px;white-space:pre-wrap;word-break:break-word}
+.atom-memory-summary-view{max-height:320px;overflow:auto;margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:8px;background:var(--dsw-alias-bg-layer-2,#24262b);color:var(--dsw-alias-label-primary,#e6e8eb);font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:12px;white-space:pre-wrap;word-break:break-word}
 
 /* Buttons follow the system theme via the harness design tokens (light/dark aware). */
 .atom-memory-row-btn,.atom-memory-btn{padding:5px 12px;border:1px solid var(--dsw-alias-border-l3,rgba(255,255,255,0.16));border-radius:6px;background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,0.08));color:var(--dsw-alias-label-primary,#e6e8eb);cursor:pointer;font-size:13px}
@@ -641,69 +601,6 @@ window.__ModuleLoader__.load({
 			document.head.appendChild(style);
 		}
 		//#endregion
-		//#region src/client/summary-parse.ts
-		/** The Chinese full-width semicolon the Python `_aggregate` joins items with. */
-		const JOIN_SEPARATOR = "；";
-		/** Strip a leading `# ` or `## ` heading marker. */
-		function stripHeading(line) {
-			return line.replace(/^#+\s+/, "");
-		}
-		/** Parse a `## theme (vN)` heading into `{ theme, version }`. */
-		function parseSectionHeading(heading) {
-			const m = heading.match(/^(.*?)\s*\(v(\d+)\)\s*$/);
-			if (m) return {
-				theme: (m[1] ?? "").trim(),
-				version: `v${m[2]}`
-			};
-			return { theme: heading.trim() };
-		}
-		/** Split a compressed body line into trimmed list items on the `；` separator. */
-		function splitItems(body) {
-			return body.split(JOIN_SEPARATOR).map((part) => part.trim()).filter((part) => part.length > 0);
-		}
-		/**
-		* Parse the Host summary markdown into a structured list.
-		*
-		* @param text The markdown string from `AtomMemoryController.summary` (non-empty).
-		* @returns A structured {@link ParsedSummary}.
-		*/
-		function parseSummary(text) {
-			const sections = [];
-			let current;
-			let rawText;
-			const lines = text.split(/\r?\n/);
-			for (const line of lines) {
-				const trimmed = line.trimEnd();
-				if (trimmed.length === 0) continue;
-				if (trimmed.startsWith("## ")) {
-					const { theme, version } = parseSectionHeading(stripHeading(trimmed));
-					current = {
-						theme,
-						version,
-						items: []
-					};
-					sections.push(current);
-					continue;
-				}
-				if (trimmed.startsWith("# ")) continue;
-				if (trimmed.startsWith("> ")) {
-					const body = trimmed.slice(2).trim();
-					if (current !== void 0) {
-						if (body.includes("覆盖")) current.coverage = body;
-						else current.note = current.note ? `${current.note}\n${body}` : body;
-					}
-					continue;
-				}
-				if (current !== void 0) current.items.push(...splitItems(trimmed));
-				else rawText = rawText ? `${rawText}\n${trimmed}` : trimmed;
-			}
-			return {
-				empty: sections.length === 0,
-				sections,
-				rawText
-			};
-		}
-		//#endregion
 		//#region src/client/MemorySettingsSection.tsx
 		/** The memory settings section rendered inside the dsh settings panel. */
 		/**
@@ -723,13 +620,6 @@ window.__ModuleLoader__.load({
 			contentActions: "atom-memory-content-actions",
 			toggle: "atom-memory-toggle",
 			tooltip: "atom-memory-tooltip",
-			summaryList: "atom-memory-summary-list",
-			summarySection: "atom-memory-summary-section",
-			summarySectionTitle: "atom-memory-summary-section-title",
-			summaryVersion: "atom-memory-summary-version",
-			summaryItems: "atom-memory-summary-items",
-			summaryNote: "atom-memory-summary-note",
-			summaryCoverage: "atom-memory-summary-coverage",
 			switchRow: "atom-memory-switch-row",
 			switch: "atom-memory-switch",
 			switchInput: "atom-memory-switch-input",
@@ -758,7 +648,7 @@ window.__ModuleLoader__.load({
 			tick: "atom-memory-tick",
 			tickActive: "atom-memory-tick-active",
 			pin: "atom-memory-pin",
-			memoryMdView: "atom-memory-memory-md",
+			summaryView: "atom-memory-summary-view",
 			overlay: "atom-memory-overlay",
 			modal: "atom-memory-modal",
 			modalHeader: "atom-memory-modal-header",
@@ -831,21 +721,13 @@ window.__ModuleLoader__.load({
 			const [status, setStatus] = (0, react.useState)();
 			const [phase, setPhase] = (0, react.useState)("idle");
 			const [modal, setModal] = (0, react.useState)();
-			const [memoryMdBusy, setMemoryMdBusy] = (0, react.useState)(false);
 			const [summaryBusy, setSummaryBusy] = (0, react.useState)(false);
 			const [modelManual, setModelManual] = (0, react.useState)(() => Boolean(state.section.extractionModel?.provider || state.section.extractionModel?.model));
 			/** The committed injection budget (the Host clamps it on the way in). */
-			const tokens = state.section.injectedMemoryMdTokens;
-			const rungIndex = nearestInjectedMdPresetIndex(tokens);
-			const rung = INJECTED_MD_TOKEN_PRESETS[rungIndex];
+			const tokens = state.section.injectedSummaryTokens;
+			const rungIndex = nearestInjectedSummaryPresetIndex(tokens);
+			const rung = INJECTED_SUMMARY_TOKEN_PRESETS[rungIndex];
 			const offGrid = rung !== tokens;
-			const openMemoryMd = () => {
-				setModal("memoryMd");
-				if (state.data.memoryMd === void 0) {
-					setMemoryMdBusy(true);
-					props.fetchMemoryMd().finally(() => setMemoryMdBusy(false));
-				}
-			};
 			const openSummary = () => {
 				setModal("summary");
 				if (state.data.summary === void 0) {
@@ -918,18 +800,18 @@ window.__ModuleLoader__.load({
 										className: css.slider,
 										type: "range",
 										min: 0,
-										max: INJECTED_MD_TOKEN_PRESETS.length - 1,
+										max: INJECTED_SUMMARY_TOKEN_PRESETS.length - 1,
 										step: 1,
 										value: rungIndex,
 										"aria-valuetext": t(PRESET_LABEL_KEYS[rung], { tokens: String(rung) }),
 										onChange: (e) => {
-											const next = INJECTED_MD_TOKEN_PRESETS[Number(e.currentTarget.value)];
-											if (next !== void 0) props.setInjectedMemoryMdTokens(next);
+											const next = INJECTED_SUMMARY_TOKEN_PRESETS[Number(e.currentTarget.value)];
+											if (next !== void 0) props.setInjectedSummaryTokens(next);
 										}
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 										className: css.ticks,
-										children: INJECTED_MD_TOKEN_PRESETS.map((preset, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										children: INJECTED_SUMMARY_TOKEN_PRESETS.map((preset, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 											className: i === rungIndex ? css.tickActive : css.tick,
 											children: preset
 										}, preset))
@@ -940,7 +822,7 @@ window.__ModuleLoader__.load({
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 										className: css.hint,
-										children: t("injectSliderHint", { rungs: INJECTED_MD_TOKEN_PRESETS.join(" / ") })
+										children: t("injectSliderHint", { rungs: INJECTED_SUMMARY_TOKEN_PRESETS.join(" / ") })
 									})
 								]
 							}),
@@ -1083,19 +965,6 @@ window.__ModuleLoader__.load({
 									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 										type: "button",
 										className: css.btn,
-										disabled: busy || memoryMdBusy,
-										onClick: openMemoryMd,
-										children: t("memoryMdOpen")
-									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-										className: css.tooltip,
-										children: t("memoryMdDesc")
-									})]
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									className: css.toggle,
-									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-										type: "button",
-										className: css.btn,
 										disabled: busy || summaryBusy,
 										onClick: openSummary,
 										children: t("summaryOpen")
@@ -1196,12 +1065,6 @@ window.__ModuleLoader__.load({
 							})
 						]
 					}),
-					modal === "memoryMd" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MemoryMdModal, {
-						t,
-						busy: memoryMdBusy,
-						content: state.data.memoryMd,
-						onClose: () => setModal(void 0)
-					}) : null,
 					modal === "summary" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(SummaryModal, {
 						t,
 						busy: summaryBusy,
@@ -1256,29 +1119,9 @@ window.__ModuleLoader__.load({
 				})
 			});
 		}
-		/** The memory.md viewer modal (read-only). */
-		function MemoryMdModal(props) {
-			const { t, busy, content, onClose } = props;
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Modal, {
-				t,
-				title: t("memoryMdHeader"),
-				onClose,
-				children: busy && content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-					className: css.hint,
-					children: t("memoryMdLoading")
-				}) : content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-					className: css.empty,
-					children: t("memoryMdEmpty")
-				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("pre", {
-					className: css.memoryMdView,
-					children: content
-				})
-			});
-		}
-		/** The memory summary viewer modal (read-only, rendered as a structured list). */
+		/** The summary viewer modal (read-only, renders the injected markdown). */
 		function SummaryModal(props) {
 			const { t, busy, content, onClose } = props;
-			const parsed = content !== void 0 ? parseSummary(content) : void 0;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Modal, {
 				t,
 				title: t("summaryHeader"),
@@ -1286,35 +1129,12 @@ window.__ModuleLoader__.load({
 				children: busy && content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 					className: css.hint,
 					children: t("summaryLoading")
-				}) : content === void 0 || parsed && parsed.empty ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+				}) : content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 					className: css.empty,
 					children: t("summaryEmpty")
-				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					className: css.summaryList,
-					children: parsed.sections.map((sec) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						className: css.summarySection,
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-								className: css.summarySectionTitle,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: sec.theme }), sec.version ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: css.summaryVersion,
-									children: sec.version
-								}) : null]
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("ul", {
-								className: css.summaryItems,
-								children: sec.items.map((item, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("li", { children: item }, i))
-							}),
-							sec.note ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-								className: css.summaryNote,
-								children: sec.note
-							}) : null,
-							sec.coverage ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-								className: css.summaryCoverage,
-								children: sec.coverage
-							}) : null
-						]
-					}, `${sec.theme}:${sec.version ?? ""}`))
+				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("pre", {
+					className: css.summaryView,
+					children: content
 				})
 			});
 		}
@@ -1566,7 +1386,6 @@ window.__ModuleLoader__.load({
 				jsonArgsMethod("listFacts", true),
 				jsonArgsMethod("editFact", true),
 				jsonArgsMethod("deleteFact", true),
-				jsonArgsMethod("memoryMd", true),
 				jsonArgsMethod("summary", true),
 				jsonArgsMethod("listProfile", true),
 				jsonArgsMethod("upsertProfile", true),

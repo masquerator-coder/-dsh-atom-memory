@@ -25,7 +25,6 @@ def test_open_db_creates_all_tables(tmp_path):
     expected = {
         "facts",
         "fact_candidates",
-        "summaries",
         "user_profile",
         "events",
         "task_queue",

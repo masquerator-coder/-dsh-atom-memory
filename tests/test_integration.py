@@ -6,8 +6,7 @@ Covers the full pipeline (spec 阶段 4):
     recall 召回
     replace -> 旧 fact superseded + superseded_by 指向新 fact
     forget -> fact retracted
-    memory_md 生成
-    摘要 stale -> 重建
+    summary 生成
     幂等：同 candidate 不重复写
 """
 
@@ -19,7 +18,6 @@ import pytest
 
 from atom_memory import AtomMem, MemConfig
 from atom_memory.embedder import serialize_float32
-from atom_memory.summarizer import SCOPE_GLOBAL, mark_stale, try_rebuild
 
 
 class _FakeEmbedder:
@@ -37,7 +35,6 @@ def _make(tmp_path, monkeypatch, **overrides) -> AtomMem:
     defaults = dict(
         db_path=str(tmp_path / "mem.db"),
         worker_poll_interval_sec=0.05,
-        summary_rebuild_debounce_sec=0.0,
         max_retries=3,
     )
     defaults.update(overrides)
@@ -152,16 +149,16 @@ def test_forget_retracts_fact(tmp_path, monkeypatch):
     assert row["status"] == "retracted"
 
 
-# ---- memory_md ------------------------------------------------------------------------
+# ---- summary ----------------------------------------------------------------------
 
-def test_memory_md_generation(tmp_path, monkeypatch):
+def test_summary_generation(tmp_path, monkeypatch):
     mem = _make(tmp_path, monkeypatch)
 
     async def scenario():
         await mem.start()
         await mem.add("u1", "s1", "用户喜欢黑咖啡", turn_id=1)
         await asyncio.sleep(0.8)
-        md = await mem.memory_md("u1", detail=True)
+        md = await mem.summary("u1", detail=True)
         await mem.stop()
         return md
 
@@ -171,7 +168,7 @@ def test_memory_md_generation(tmp_path, monkeypatch):
     assert "fact_id" in md or "[f" in md
 
 
-def test_memory_md_compact_has_no_fact_id(tmp_path, monkeypatch):
+def test_summary_compact_has_no_fact_id(tmp_path, monkeypatch):
     """The injected depth renders the same content without the UUID payload."""
     mem = _make(tmp_path, monkeypatch)
 
@@ -179,7 +176,7 @@ def test_memory_md_compact_has_no_fact_id(tmp_path, monkeypatch):
         await mem.start()
         await mem.add("u1", "s1", "用户喜欢黑咖啡", turn_id=1)
         await asyncio.sleep(0.8)
-        md = await mem.memory_md("u1", max_tokens=600, detail=False)
+        md = await mem.summary("u1", max_tokens=600, detail=False)
         await mem.stop()
         return md
 
@@ -189,7 +186,7 @@ def test_memory_md_compact_has_no_fact_id(tmp_path, monkeypatch):
     assert not md.splitlines()[0].startswith("# 记忆")
 
 
-# ---- knowledge categories end-to-end (type + content + recall + memory_md) -------------
+# ---- knowledge categories end-to-end (type + content + recall + summary) -------------
 
 def test_knowledge_fact_persists_type_and_content(tmp_path, monkeypatch):
     """A lesson/SOP utterance persists its type discriminator and full content body."""
@@ -242,87 +239,20 @@ def test_recall_matches_knowledge_content(tmp_path, monkeypatch):
     assert lesson.get("content") == "不能在没测试的情况下直接上线"
 
 
-def test_memory_md_renders_knowledge_content(tmp_path, monkeypatch):
-    """memory.md renders the knowledge content sub-line for a lesson fact."""
+def test_summary_renders_knowledge_content(tmp_path, monkeypatch):
+    """summary renders the knowledge content sub-line for a lesson fact."""
     mem = _make(tmp_path, monkeypatch)
 
     async def scenario():
         await mem.start()
         await mem.add("u1", "s1", "这次的教训是不能在没测试的情况下直接上线", turn_id=1)
         await asyncio.sleep(0.8)
-        md = await mem.memory_md("u1")
+        md = await mem.summary("u1")
         await mem.stop()
         return md
 
     md = _run(scenario())
     assert "不能在没测试的情况下直接上线" in md
-
-
-# ---- summary stale -> rebuild ------------------------------------------------------------
-
-def test_summary_is_rebuilt_after_mutation(tmp_path, monkeypatch):
-    """A mutation marks the summary stale and the worker rebuilds it (version++)."""
-    mem = _make(tmp_path, monkeypatch)
-
-    async def scenario():
-        await mem.start()
-        await mem.add("u1", "s1", "用户喜欢黑咖啡", turn_id=1)
-        await asyncio.sleep(0.8)
-        v1 = mem.db.execute(
-            "SELECT version FROM summaries WHERE user_id='u1'"
-        ).fetchone()
-        assert v1 is not None and v1["version"] >= 1
-
-        # second mutation re-marks stale and triggers another (debounce=0) rebuild
-        await mem.add("u1", "s1", "用户的职业是工程师", turn_id=2)
-        await asyncio.sleep(0.8)
-        row = mem.db.execute(
-            "SELECT version, stale FROM summaries WHERE user_id='u1'"
-        ).fetchone()
-        # No stale rows remain (rebuild settled) and version advanced.
-        stale_any = mem.db.execute(
-            "SELECT COUNT(*) AS n FROM summaries WHERE user_id='u1' AND stale=1"
-        ).fetchone()["n"]
-        await mem.stop()
-        return v1["version"], row, stale_any
-
-    v1, row, stale_any = _run(scenario())
-    assert row["version"] > v1  # rebuild ran again after the mutation
-    assert row["stale"] == 0  # final summary is fresh
-    assert stale_any == 0  # nothing left stale
-
-
-def test_summarizer_stale_then_debounced_rebuild(tmp_path, monkeypatch):
-    """Direct summarizer semantics: stale rows rebuild only after debounce."""
-    from atom_memory.db import open_db
-
-    conn = open_db(MemConfig(db_path=str(tmp_path / "sum.db")))
-
-    conn.execute(
-        "INSERT INTO facts(fact_id, user_id, session_id, subject, predicate, "
-        "object, status, observed_at, created_at) VALUES "
-        "('f1','u1','s1','用户','偏好','黑咖啡','active',1,1)"
-    )
-    conn.commit()
-
-    # build a fresh summary
-    assert try_rebuild(conn, "u1", scope=SCOPE_GLOBAL, debounce_sec=0, max_tokens=1500)
-    fresh = conn.execute(
-        "SELECT stale FROM summaries WHERE user_id='u1'"
-    ).fetchone()
-    assert fresh["stale"] == 0
-
-    # mark stale, queue a rebuild but block it with a long debounce
-    mark_stale(conn, "u1")
-    assert try_rebuild(conn, "u1", scope=SCOPE_GLOBAL, debounce_sec=3600, max_tokens=1500) is False
-    row = conn.execute("SELECT stale FROM summaries WHERE user_id='u1'").fetchone()
-    assert row["stale"] == 1  # still stale (deferred)
-
-    # debounce elapsed -> rebuild -> fresh
-    assert try_rebuild(conn, "u1", scope=SCOPE_GLOBAL, debounce_sec=0, max_tokens=1500)
-    row = conn.execute("SELECT stale FROM summaries WHERE user_id='u1'").fetchone()
-    assert row["stale"] == 0
-    conn.close()
 
 
 # ---- idempotency: 同 candidate 不重复写 -----------------------------------------------
@@ -365,8 +295,6 @@ def test_stats_counts(tmp_path, monkeypatch):
     s = _run(scenario())
     assert s["facts"] >= 1
     assert s["pending"] == 0  # all candidates processed
-    assert s["stale_summaries"] >= 0
-    assert s["summaries"] >= 1  # a fresh summary was built
 
 
 # ---- memory-type persistence: procedural / episodic through the API ----------------
@@ -449,48 +377,6 @@ def test_llm_failure_falls_back_to_rules_through_worker(tmp_path, monkeypatch):
     # LLM failed -> rule fallback persists the 偏好 fact, nothing is dropped.
     assert len(rows) == 1
     assert (rows[0]["predicate"], rows[0]["object"]) == ("偏好", "黑咖啡")
-
-
-# ---- summary read path: stale refresh + drill-down pointers --------------------------
-
-def _insert_fact(conn, fact_id, predicate, obj, ftype):
-    conn.execute(
-        "INSERT INTO facts(fact_id, user_id, session_id, subject, predicate, "
-        "object, type, status, observed_at, created_at) "
-        "VALUES (?, 'u1', 's1', '用户', ?, ?, ?, 'active', 1000, 1000)",
-        (fact_id, predicate, obj, ftype),
-    )
-
-
-def test_summary_read_refreshes_stale_and_lists_drill_down_pointers(tmp_path, monkeypatch):
-    """summary() rebuilds a stranded stale summary and points at unexpanded knowledge."""
-    mem = _make(tmp_path, monkeypatch)
-
-    async def scenario():
-        await mem.start()
-        _insert_fact(mem.db, "f-name", "名字", "小强哥", "semantic")
-        _insert_fact(mem.db, "f-lesson", "教训", "先备份再升级", "lesson")
-        _insert_fact(mem.db, "f-sop", "发布SOP", "构建测试部署", "sop")
-        mem.db.commit()
-
-        # Strand the summary: stale with no rescheduled rebuild (debounce>0).
-        mark_stale(mem.db, "u1")
-
-        text = await mem.summary("u1")
-        stale = mem.db.execute(
-            "SELECT stale FROM summaries WHERE user_id='u1'"
-        ).fetchone()["stale"]
-        await mem.stop()
-        return text, stale
-
-    text, stale = _run(scenario())
-    assert stale == 0                       # the read path refreshed it
-    assert "名字: 小强哥" in text             # aggregated content
-    assert "教训: 先备份再升级" in text
-    assert "发布SOP" not in text             # long-form body stays out of the digest
-    assert "未展开正文" in text              # ...but is advertised as drillable
-    assert "f-sop" in text                  # with the fact_id to drill into
-    assert "覆盖 3 条活跃事实" in text
 
 
 # ---- recall budgets the knowledge body, not just the SPO title -----------------------

@@ -6,8 +6,8 @@ const zh = {
   // 1) master switch
   masterHeader: '记忆开关',
   masterDesc: '关闭后停用记忆插件：不再捕获、不再注入上下文，记忆工具也会拒绝调用。打开即时恢复。',
-  // 1b) injected memory.md budget
-  injectHeader: '系统提示词注入体积（memory.md）',
+  // 1b) injected summary budget
+  injectHeader: '系统提示词注入体积（记忆摘要）',
   injectSliderLabel: '挡位',
   injectPresetCompact: '精简 · {tokens} tokens',
   injectPresetStandard: '标准 · {tokens} tokens',
@@ -37,9 +37,9 @@ const zh = {
   modelHint: '选择“手动指定模型”后可填 Provider ID 与 Model（跟随默认时留空）；填了 API 地址则由插件直连该 OpenAI 兼容端点，否则走 dsh 默认模型。',
   // 3) 记忆内容 group: summary + profile + memory & facts share one region
   contentGroupHeader: '记忆内容',
-  // 3a) summary
-  summaryHeader: '记忆摘要',
-  summaryDesc: '只读展示记忆的聚合摘要——把稳定属性、偏好、工作流、近期事件与轻知识压缩成一份可快速通读的紧凑摘要（有损），需要精确定位某条事实时再用 memory_recall 检索。',
+  // 3a) summary (compact injected view)
+  summaryHeader: '记忆摘要（注入视图）',
+  summaryDesc: '只读展示注入会话系统提示词的那份紧凑记忆摘要——按类型分组、按重要度排序、不含 fact_id，与模型看到的文本一致。若要拿到 fact_id 定位某条事实，请用 memory_summary_detail 工具查看完整清单。',
   summaryOpen: '查看摘要',
   summaryLoading: '正在加载…',
   summaryEmpty: '暂无摘要（没有活跃事实）。',
@@ -78,13 +78,7 @@ const zh = {
   addRow: '添加一行',
   close: '关闭',
   saving: '保存中…',
-  // 4b) memory.md view
-  memoryMdHeader: 'memory.md 记忆视图（注入视图）',
-  memoryMdDesc: '只读展示注入会话系统提示词的那份紧凑记忆视图——按类型分组、按重要度排序、不含 fact_id，与模型看到的文本一致。若要拿到 fact_id 定位某条事实，请用 memory_memory_md 工具查看完整清单。',
-  memoryMdOpen: '查看 memory.md',
-  memoryMdClose: '收起',
-  memoryMdLoading: '正在加载…',
-  memoryMdEmpty: '暂无内容（可能是空记忆或尚未加载）。',
+  // (removed the old memoryMd block — the compact injected view now lives under summary above)
   // 5) backup / restore
   backupHeader: '记忆备份与恢复',
   backupDesc: '把记忆导出为 JSON 文件，或从 JSON 文件导入恢复（replace 语义：覆盖当前记忆）。',
@@ -99,7 +93,7 @@ const en: Record<keyof typeof zh, string> = {
   intro: 'Manage dsh-atom-memory: master switch, extraction model, user profile, memory content, and backup/restore.',
   masterHeader: 'Memory switch',
   masterDesc: 'When off the memory plugin is disabled: no capture, no context injection, and memory tools refuse calls. Turning on restores immediately.',
-  injectHeader: 'System-prompt injection size (memory.md)',
+  injectHeader: 'System-prompt injection size (memory summary)',
   injectSliderLabel: 'Gear',
   injectPresetCompact: 'Compact · {tokens} tokens',
   injectPresetStandard: 'Standard · {tokens} tokens',
@@ -127,8 +121,8 @@ const en: Record<keyof typeof zh, string> = {
   modelApiKeyPlaceholder: 'sk-...',
   modelHint: 'With “manual model” you can set Provider ID and Model (leave empty to follow default); filling in the API Base URL makes the plugin call that OpenAI-compatible endpoint directly, otherwise the dsh default model is used.',
   contentGroupHeader: 'Memory content',
-  summaryHeader: 'Memory summary',
-  summaryDesc: 'Read-only render of the aggregate memory summary — a compact, lossy digest of stable attributes, preferences, workflows, recent events and light knowledge, meant to be skimmed first; use memory_recall to drill into any specific fact.',
+  summaryHeader: 'Memory summary (as injected)',
+  summaryDesc: 'Read-only render of the compact memory summary injected into the session system prompt — grouped by type, ordered by importance, no fact_ids — i.e. exactly the text the model sees. For a full list carrying fact_ids (to locate one fact), use the memory_summary_detail tool.',
   summaryOpen: 'View summary',
   summaryLoading: 'Loading…',
   summaryEmpty: 'No summary yet (no active facts).',
@@ -165,12 +159,7 @@ const en: Record<keyof typeof zh, string> = {
   addRow: 'Add row',
   close: 'Close',
   saving: 'Saving…',
-  memoryMdHeader: 'memory.md memory view (as injected)',
-  memoryMdDesc: 'Read-only render of the compact memory view injected into the session system prompt — grouped by type, ordered by importance, no fact_ids — i.e. exactly the text the model sees. For a full list carrying fact_ids (to locate one fact), use the memory_memory_md tool.',
-  memoryMdOpen: 'View memory.md',
-  memoryMdClose: 'Collapse',
-  memoryMdLoading: 'Loading…',
-  memoryMdEmpty: 'No content yet (empty memory or not loaded).',
+  // (removed the old memoryMd block — the compact injected view now lives under summary above)
   backupHeader: 'Backup & restore',
   backupDesc: 'Export memory to a JSON file, or import from a JSON file to restore (replace semantics: overwrites current memory).',
   exportBtn: 'Export JSON',

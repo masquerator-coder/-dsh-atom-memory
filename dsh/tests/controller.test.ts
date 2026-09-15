@@ -4,7 +4,7 @@
  * The controller is the seam between the browser settings panel and the Python
  * store, so the assertions here pin the *wire contract* the panel depends on:
  * which Python method is called and with which arguments. The load-bearing case
- * is `memoryMd`: the "view memory.md" modal must render the text the model
+ * is `summary`: the "view memory" modal must render the text the model
  * actually receives, i.e. the compact depth (`detail: false`). Asking for the
  * default detail depth silently showed a different document than the one
  * injected into the session system prompt.
@@ -30,77 +30,48 @@ function makeController(options: { result?: unknown; alive?: boolean; enabled?: 
   return { controller, call }
 }
 
-describe('AtomMemoryController.memoryMd', () => {
+describe('AtomMemoryController.summary', () => {
   it('asks for the compact depth so the modal shows the injected snapshot', async () => {
     const { controller, call } = makeController({ result: '决策规则\n- 一条规则' })
-    const text = await controller.memoryMd({ user: 'global' })
+    const text = await controller.summary({ user: 'global' })
 
     expect(text).toBe('决策规则\n- 一条规则')
     expect(call).toHaveBeenCalledTimes(1)
     const [method, params] = call.mock.calls[0]!
-    expect(method).toBe('memory_md')
+    expect(method).toBe('summary')
     expect(params).toMatchObject({ user_id: 'global', detail: false })
   })
 
-  it('defaults the token budget to the memory.md budget (1500)', async () => {
+  it('defaults the token budget to the summary budget (1500)', async () => {
     const { controller, call } = makeController()
-    await controller.memoryMd({ user: 'global' })
+    await controller.summary({ user: 'global' })
     expect(call.mock.calls[0]![1]).toMatchObject({ max_tokens: 1500 })
   })
 
   it('forwards a caller-supplied budget', async () => {
     const { controller, call } = makeController()
-    await controller.memoryMd({ user: 'global', maxTokens: 600 })
+    await controller.summary({ user: 'global', maxTokens: 600 })
     expect(call.mock.calls[0]![1]).toMatchObject({ max_tokens: 600, detail: false })
   })
 
   it('unwraps a wrapped payload and tolerates an empty one', async () => {
     const wrapped = makeController({ result: { text: '# wrapped' } })
-    await expect(wrapped.controller.memoryMd({ user: 'global' })).resolves.toBe('# wrapped')
-
-    const empty = makeController({ result: {} })
-    await expect(empty.controller.memoryMd({ user: 'global' })).resolves.toBe('')
-  })
-
-  it('refuses to render while the bridge is down', async () => {
-    const { controller, call } = makeController({ alive: false })
-    await expect(controller.memoryMd({ user: 'global' })).rejects.toThrow('bridge is not running')
-    expect(call).not.toHaveBeenCalled()
-  })
-
-  it('refuses to render while the plugin master switch is off', async () => {
-    const { controller, call } = makeController({ enabled: false })
-    await expect(controller.memoryMd({ user: 'global' })).rejects.toThrow('memory is disabled')
-    expect(call).not.toHaveBeenCalled()
-  })
-})
-
-describe('AtomMemoryController.summary', () => {
-  it('forwards the user scope to the Python summary method and returns its text', async () => {
-    const { controller, call } = makeController({ result: '# 摘要 (Summary) — global\n属性: 工程师' })
-    const text = await controller.summary({ user: 'global' })
-
-    expect(text).toBe('# 摘要 (Summary) — global\n属性: 工程师')
-    expect(call).toHaveBeenCalledTimes(1)
-    const [method, params] = call.mock.calls[0]!
-    expect(method).toBe('summary')
-    expect(params).toMatchObject({ user_id: 'global' })
-  })
-
-  it('unwraps a wrapped payload and tolerates an empty one', async () => {
-    const wrapped = makeController({ result: { text: '# wrapped summary' } })
-    await expect(wrapped.controller.summary({ user: 'global' })).resolves.toBe('# wrapped summary')
+    await expect(wrapped.controller.summary({ user: 'global' })).resolves.toBe('# wrapped')
 
     const empty = makeController({ result: {} })
     await expect(empty.controller.summary({ user: 'global' })).resolves.toBe('')
   })
 
-  it('refuses to render while the bridge is down or the master switch is off', async () => {
-    const down = makeController({ alive: false })
-    await expect(down.controller.summary({ user: 'global' })).rejects.toThrow('bridge is not running')
+  it('refuses to render while the bridge is down', async () => {
+    const { controller, call } = makeController({ alive: false })
+    await expect(controller.summary({ user: 'global' })).rejects.toThrow('bridge is not running')
+    expect(call).not.toHaveBeenCalled()
+  })
 
-    const off = makeController({ enabled: false })
-    await expect(off.controller.summary({ user: 'global' })).rejects.toThrow('memory is disabled')
+  it('refuses to render while the plugin master switch is off', async () => {
+    const { controller, call } = makeController({ enabled: false })
+    await expect(controller.summary({ user: 'global' })).rejects.toThrow('memory is disabled')
+    expect(call).not.toHaveBeenCalled()
   })
 })
 

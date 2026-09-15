@@ -42,22 +42,22 @@ interface Config {
   preCompressionCapture?: boolean;
   /** Max facts surfaced to the model per recall tool call. */
   maxRecalledFacts?: number;
-  /** Estimated token cap for returned memory.md. */
-  memoryMdTokens?: number;
+  /** Estimated token cap for returned summary. */
+  summaryTokens?: number;
   /**
-   * Token cap for the memory.md snapshot frozen into the system prompt.
+   * Token cap for the summary snapshot frozen into the system prompt.
    *
-   * Deliberately separate from (and smaller than) `memoryMdTokens`: the
+   * Deliberately separate from (and smaller than) `summaryTokens`: the
    * injected text is paid for on every request of a session and is rendered at
    * the compact depth, while the tool/settings view returns the full detail
    * list.
    *
    * This is only the *seed* for the live value: the settings panel owns it at
-   * runtime (`atom-memory` → `injectedMemoryMdTokens`), and a change there
+   * runtime (`atom-memory` → `injectedSummaryTokens`), and a change there
    * applies to every session that has not frozen its snapshot yet.
    */
-  injectedMemoryMdTokens?: number;
-  /** Inject a session-start-frozen memory.md snapshot into the system prompt. */
+  injectedSummaryTokens?: number;
+  /** Inject a session-start-frozen summary snapshot into the system prompt. */
   contextInjectionEnabled?: boolean;
   /** Per-RPC timeout in ms. */
   rpcTimeoutMs?: number;

@@ -20,8 +20,8 @@ import type { ProfileEditRow } from '../src/client/memory-settings-controller.ts
 import { MemorySettingsSection } from '../src/client/MemorySettingsSection.tsx'
 import { dicts, LOCALE_NS } from '../src/client/locales.ts'
 import {
-  DEFAULT_INJECTED_MD_TOKENS,
-  INJECTED_MD_TOKEN_PRESETS,
+  DEFAULT_INJECTED_SUMMARY_TOKENS,
+  INJECTED_SUMMARY_TOKEN_PRESETS,
 } from '../src/injection-budget.ts'
 
 const zh = dicts.zh
@@ -47,7 +47,7 @@ function useSnapshotHook<T>(store: { getSnapshot(): T; subscribe(fn: () => void)
 function buildController(
   seedFacts = false,
   seedProfile = false,
-  budget: number | undefined = DEFAULT_INJECTED_MD_TOKENS,
+  budget: number | undefined = DEFAULT_INJECTED_SUMMARY_TOKENS,
   profilePinned = false,
 ) {
   // A real in-memory settings scope: `set` persists the key and notifies
@@ -56,7 +56,7 @@ function buildController(
   let section: Record<string, unknown> = {
     enabled: true, captureEnabled: true, llmExtractionEnabled: true,
     contextInjectionEnabled: true, extractionModel: undefined,
-    injectedMemoryMdTokens: budget,
+    injectedSummaryTokens: budget,
   }
   const listeners = new Set<() => void>()
   const scope = {
@@ -81,8 +81,7 @@ function buildController(
     }),
     editFact: async () => ({ ok: true, value: {} }),
     deleteFact: async () => ({ ok: true, value: {} }),
-    memoryMd: async () => ({ ok: true, value: '# memory.md\ntest' }),
-    summary: async () => ({ ok: true, value: '# 摘要 (Summary) — global\n\n## global (v3)\n\n属性: 工程师；偏好 Python (喜欢)\n\n> ⚠ 另有 1 条长文知识（SOP/few-shot）未展开正文\n> 覆盖 2 条活跃事实 · fact_id: f1, f2' }),
+    summary: async () => ({ ok: true, value: '# 记忆摘要 (Summary) — global\n决策规则\n- 一条规则' }),
     listProfile: async () => ({
       ok: true,
       value: {
@@ -167,10 +166,10 @@ function spyModelWrites(props: { setExtractionModelOverride: unknown }): Array<R
 }
 
 /** Record every injection-budget write while still applying it for real. */
-function spyBudgetWrites(props: { setInjectedMemoryMdTokens: unknown }): number[] {
+function spyBudgetWrites(props: { setInjectedSummaryTokens: unknown }): number[] {
   const writes: number[] = []
-  const real = props.setInjectedMemoryMdTokens as (tokens: number) => Promise<void>
-  props.setInjectedMemoryMdTokens = (async (tokens: number) => {
+  const real = props.setInjectedSummaryTokens as (tokens: number) => Promise<void>
+  props.setInjectedSummaryTokens = (async (tokens: number) => {
     writes.push(tokens)
     await real(tokens)
   }) as never
@@ -188,7 +187,6 @@ describe('MemorySettingsSection client render', () => {
     })
     expect(screen.getByText('记忆')).toBeTruthy()
     expect(screen.getByText('LLM 抽取模型')).toBeTruthy()
-    expect(screen.getByText('查看 memory.md')).toBeTruthy()
     expect(screen.getByText('编辑记忆')).toBeTruthy()
     expect(screen.getByText('编辑画像')).toBeTruthy()
     expect(screen.getByText('查看摘要')).toBeTruthy()
@@ -224,49 +222,28 @@ describe('MemorySettingsSection client render', () => {
     expect(enabledWrites).toEqual([false])
   })
 
-  it('opens the memory.md view in a modal', async () => {
-    const controller = buildController()
-    const { props } = bind(controller)
-    await act(async () => {
-      render(createElement(MemorySettingsSection, props))
-    })
-    // Not open initially.
-    expect(screen.queryByText(/# memory\.md/)).toBeNull()
-    await act(async () => {
-      fireEvent.click(screen.getByText('查看 memory.md'))
-    })
-    await act(async () => {})
-    expect(screen.getByText(/# memory\.md/)).toBeTruthy()
-  })
-
   it('opens the memory summary in a read-only modal', async () => {
     const controller = buildController()
     const { props } = bind(controller)
     await act(async () => {
       render(createElement(MemorySettingsSection, props))
     })
-    // All four memory-content actions (memory.md view / summary / profile /
-    // memory & facts) share the one 记忆内容 group.
+    // All four memory-content actions (summary / profile / memory & facts)
+    // share the one 记忆内容 group.
     const group = screen.getByText('记忆内容').closest('fieldset')!
-    expect(within(group).getByText('查看 memory.md')).toBeTruthy()
     expect(within(group).getByText('查看摘要')).toBeTruthy()
     expect(within(group).getByText('编辑画像')).toBeTruthy()
     expect(within(group).getByText('编辑记忆')).toBeTruthy()
     // Not open initially.
-    expect(screen.queryByText('global')).toBeNull()
+    expect(screen.queryByText(/# 记忆摘要/)).toBeNull()
     await act(async () => {
       fireEvent.click(screen.getByText('查看摘要'))
     })
     await act(async () => {})
-    // The summary renders as a structured list, not raw markdown: the section
-    // heading, version badge, and each `；`-joined clause become a list item.
-    expect(screen.getByText('global')).toBeTruthy()
-    expect(screen.getByText('v3')).toBeTruthy()
-    expect(screen.getByText('属性: 工程师')).toBeTruthy()
-    expect(screen.getByText('偏好 Python (喜欢)')).toBeTruthy()
-    expect(screen.getByText(/覆盖 2 条活跃事实/)).toBeTruthy()
-    // The raw document title / heading markers are not dumped.
-    expect(screen.queryByText(/# 摘要 \(Summary\) — global/)).toBeNull()
+    // The summary modal renders the raw markdown exactly as it is injected
+    // (read-only `<pre>`), not a parsed structured list.
+    expect(screen.getByText(/# 记忆摘要 \(Summary\) — global/)).toBeTruthy()
+    expect(screen.getByText(/决策规则/)).toBeTruthy()
   })
 
   it('lays the memory-content actions out as a horizontal row of tooltip buttons', async () => {
@@ -391,14 +368,14 @@ describe('MemorySettingsSection client render', () => {
       render(createElement(MemorySettingsSection, props))
     })
     // The field is about the *system prompt* snapshot, and says so.
-    expect(screen.getByText('系统提示词注入体积（memory.md）')).toBeTruthy()
-    expect(screen.queryByText('注入体积（memory.md）')).toBeNull()
+    expect(screen.getByText('系统提示词注入体积（记忆摘要）')).toBeTruthy()
+    expect(screen.queryByText('注入体积（记忆摘要）')).toBeNull()
 
     const slider = screen.getByLabelText('挡位') as HTMLInputElement
     expect(slider.type).toBe('range')
     expect(slider.className).toBe('atom-memory-slider')
     expect(slider.min).toBe('0')
-    expect(slider.max).toBe(String(INJECTED_MD_TOKEN_PRESETS.length - 1))
+    expect(slider.max).toBe(String(INJECTED_SUMMARY_TOKEN_PRESETS.length - 1))
     expect(slider.step).toBe('1')
     // Parked on the default gear (800), and naming it rather than showing a
     // bare index to assistive tech.
@@ -406,7 +383,7 @@ describe('MemorySettingsSection client render', () => {
     expect(slider.getAttribute('aria-valuetext')).toBe('标准 · 800 tokens')
     expect(screen.getByText('标准 · 800 tokens')).toBeTruthy()
     // Every gear is visible under the handle, so the ladder is discoverable.
-    for (const preset of INJECTED_MD_TOKEN_PRESETS) {
+    for (const preset of INJECTED_SUMMARY_TOKEN_PRESETS) {
       expect(screen.getByText(String(preset))).toBeTruthy()
     }
     expect(screen.getByText(/当前 800 tokens/)).toBeTruthy()
@@ -425,18 +402,18 @@ describe('MemorySettingsSection client render', () => {
     await act(async () => {
       fireEvent.change(slider, { target: { value: '0' } })
     })
-    expect(writes).toEqual([INJECTED_MD_TOKEN_PRESETS[0]])
+    expect(writes).toEqual([INJECTED_SUMMARY_TOKEN_PRESETS[0]])
     await act(async () => {})
     expect(slider.value).toBe('0')
     expect(screen.getByText('精简 · 300 tokens')).toBeTruthy()
     expect(screen.getByText(/当前 300 tokens/)).toBeTruthy()
 
     // The top index writes the top gear's token budget.
-    const top = INJECTED_MD_TOKEN_PRESETS.length - 1
+    const top = INJECTED_SUMMARY_TOKEN_PRESETS.length - 1
     await act(async () => {
       fireEvent.change(slider, { target: { value: String(top) } })
     })
-    expect(writes).toEqual([INJECTED_MD_TOKEN_PRESETS[0], INJECTED_MD_TOKEN_PRESETS[top]])
+    expect(writes).toEqual([INJECTED_SUMMARY_TOKEN_PRESETS[0], INJECTED_SUMMARY_TOKEN_PRESETS[top]])
     await act(async () => {})
     expect(slider.value).toBe(String(top))
   })
@@ -463,7 +440,7 @@ describe('MemorySettingsSection client render', () => {
     await act(async () => {
       fireEvent.change(slider, { target: { value: '1' } })
     })
-    expect(writes).toEqual([INJECTED_MD_TOKEN_PRESETS[1]])
+    expect(writes).toEqual([INJECTED_SUMMARY_TOKEN_PRESETS[1]])
     await act(async () => {})
     expect(screen.getByText('标准 · 800 tokens')).toBeTruthy()
     expect(screen.queryByText(/不在挡位梯上/)).toBeNull()
@@ -533,7 +510,7 @@ describe('MemorySettingsSection client render', () => {
    */
   it('defines a stylesheet rule for the slider and pin classes it renders', async () => {
     const { memorySettingsStyleText } = await import('../src/client/styles.ts')
-    for (const cls of ['atom-memory-slider', 'atom-memory-ticks', 'atom-memory-tick-active', 'atom-memory-pin', 'atom-memory-content-actions', 'atom-memory-toggle', 'atom-memory-tooltip', 'atom-memory-group', 'atom-memory-group-title', 'atom-memory-switch', 'atom-memory-switch-input', 'atom-memory-switch-track', 'atom-memory-switch-thumb', 'atom-memory-summary-list', 'atom-memory-summary-section', 'atom-memory-summary-section-title', 'atom-memory-summary-version', 'atom-memory-summary-items', 'atom-memory-summary-note', 'atom-memory-summary-coverage']) {
+    for (const cls of ['atom-memory-slider', 'atom-memory-ticks', 'atom-memory-tick-active', 'atom-memory-pin', 'atom-memory-content-actions', 'atom-memory-toggle', 'atom-memory-tooltip', 'atom-memory-group', 'atom-memory-group-title', 'atom-memory-switch', 'atom-memory-switch-input', 'atom-memory-switch-track', 'atom-memory-switch-thumb', 'atom-memory-summary-view']) {
       expect(memorySettingsStyleText).toContain(`.${cls}`)
     }
   })

@@ -1,6 +1,6 @@
-"""Generate a user's ``memory.md`` summary from active atomic facts.
+"""Generate a user's ``summary`` from active atomic facts.
 
-``memory.md`` is a *derived view* over the authoritative facts table, rendered at
+``summary`` is a *derived view* over the authoritative facts table, rendered at
 two depths from one implementation:
 
 - **compact** (``detail=False``) — what the dsh host freezes into the session
@@ -10,7 +10,7 @@ two depths from one implementation:
   UUIDs cost more tokens than they carry information for the model, and every
   fact stays addressable through ``recall`` and the settings editor.
 - **detail** (``detail=True``) — the full list, one bullet per fact with its
-  ``fact_id``, used by the ``memory_memory_md`` tool and the settings modal.
+  ``fact_id``, used by the ``memory_summary_detail`` tool and the settings modal.
 
 Ordering blends **importance and recency** into one score (see
 :func:`_blend`): a fact's ``importance`` only counts when the extractor actually
@@ -141,13 +141,13 @@ _SECTION_ORDER = [
 _EMPTY_NOTICE = "_暂无持久化的原子记忆。_ (No active atomic facts yet.)"
 
 
-def generate_memory_md(
+def generate_summary(
     conn: sqlite3.Connection,
     user_id: str,
     max_tokens: int = 1500,
     detail: bool = True,
 ) -> str:
-    """Build the ``memory.md`` text for a user.
+    """Build the ``summary`` text for a user.
 
     Args:
         conn: The SQLite connection.

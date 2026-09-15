@@ -15,7 +15,7 @@ import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/w
 import { MemorySettingsController } from '../src/client/memory-settings-controller.ts'
 import { MemorySettingsSection } from '../src/client/MemorySettingsSection.tsx'
 import { dicts } from '../src/client/locales.ts'
-import { DEFAULT_INJECTED_MD_TOKENS } from '../src/injection-budget.ts'
+import { DEFAULT_INJECTED_SUMMARY_TOKENS } from '../src/injection-budget.ts'
 
 const zh = dicts.zh
 
@@ -36,7 +36,7 @@ function buildProps(): Record<string, any> {
       value: {
         enabled: true, captureEnabled: true, llmExtractionEnabled: true,
         contextInjectionEnabled: true, extractionModel: undefined,
-        injectedMemoryMdTokens: DEFAULT_INJECTED_MD_TOKENS,
+        injectedSummaryTokens: DEFAULT_INJECTED_SUMMARY_TOKENS,
       },
       base: undefined, user: undefined, revision: 1, writable: true, mode: 'host' as const,
     }),
@@ -83,7 +83,7 @@ describe('MemorySettingsSection render smoke', () => {
       expect(html).toContain('记忆')
       // The injection budget renders as a gear slider, named for the system
       // prompt it sizes.
-      expect(html).toContain('系统提示词注入体积（memory.md）')
+      expect(html).toContain('系统提示词注入体积（记忆摘要）')
       expect(html).toContain('type="range"')
     }).not.toThrow()
   })

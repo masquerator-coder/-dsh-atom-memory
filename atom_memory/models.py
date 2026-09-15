@@ -1,8 +1,8 @@
 """Typed data models shared across the dsh-atom-memory library.
 
 These dataclasses describe the unit-of-work objects that flow through the
-library: raw extracted fact candidates, persisted atomic facts, summary
-records and the result of a validation pass.
+library: raw extracted fact candidates, persisted atomic facts and the result
+of a validation pass.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 # Memory-type discriminators stored on facts / fact_candidates. Derived views
-# (summaries) render each type with its own format.
+# (the summary view) render each type with its own format.
 TYPE_SEMANTIC = "semantic"          # stable SPO knowledge: preferences, attributes
 TYPE_PROCEDURAL = "procedural"      # ordered workflows / how-to experience
 TYPE_EPISODIC = "episodic"          # one-off events: "at time T, X happened"
@@ -21,20 +21,14 @@ TYPE_DECISION_RULE = "decision_rule"  # if-then decision guidance
 TYPE_FEW_SHOT = "few_shot"          # input -> ideal-output example pair (long)
 TYPE_LESSON = "lesson"              # a distilled lesson / takeaway
 
-# Knowledge categories whose content is lightweight enough to compress into the
-# derived summary; long-form categories (SOP / few_shot) are excluded from the
-# summary text but remain searchable and their fact_id stays tracked.
-SUMMARY_LIGHT_KNOWLEDGE = {TYPE_DECISION_RULE, TYPE_LESSON}
-
 # Every knowledge category carries a rich content body. Long-form ones are
 # intentionally absent from the summary text (their bodies are too large to
 # compress usefully), so they must be recognised and skipped — not mis-rendered
 # as ordinary attributes.
 ALL_KNOWLEDGE = {TYPE_SOP, TYPE_DECISION_RULE, TYPE_FEW_SHOT, TYPE_LESSON}
-SUMMARY_EXCLUDED_KNOWLEDGE = ALL_KNOWLEDGE - SUMMARY_LIGHT_KNOWLEDGE
 
 # Predicate used for episodic facts (events). Kept distinct so conflict
-# semantics and summary bucketing can recognise events reliably.
+# semantics and the summary view's event detection can recognise events reliably.
 PRED_EVENT = "事件"
 
 # Value meaning "no explicit importance signal was provided". Written by every
@@ -152,22 +146,6 @@ class AtomicFact:
     version: int = 1
     type: str = TYPE_SEMANTIC
     content: Optional[str] = None
-
-
-@dataclass
-class Summary:
-    """A persisted summary record (mirrors the ``summaries`` table)."""
-
-    summary_id: str
-    user_id: str
-    scope: str
-    text: str
-    fact_ids: str
-    theme: Optional[str] = None
-    version: int = 1
-    stale: int = 0
-    token_count: Optional[int] = None
-    updated_at: int = 0
 
 
 @dataclass

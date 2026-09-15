@@ -31,7 +31,7 @@ function setup(extract?: (text: string) => Promise<unknown[]>) {
     bridge: bridge as any,
     fallbackScope: 'global',
     maxRecalledFacts: 10,
-    memoryMdTokens: 500,
+    summaryTokens: 500,
     extract: extract as any,
   }
   registerMemoryTools(deps)
@@ -86,18 +86,14 @@ describe('memory tools user scope', () => {
         },
         { fact_id: 'f-name-1', subject: '用户', predicate: '名字', object: '小强哥', type: 'semantic', content: null },
       ],
-      summaries: [{ text: '名字: 小强哥' }],
       token_count: 20,
     })
 
     const result = (await recall.execute({ query: '升级' }, execWithSession('session-XXX'))) as any
-    expect(result.summaries).toEqual([{ text: '名字: 小强哥' }])
     expect(result.facts).toHaveLength(2)
 
     const rendered = recall.output!.render!({ query: '升级' }, result) as Array<{ text: string }>
     const text = rendered[0]!.text
-    // summary first, then the drilled-in facts
-    expect(text).toContain('【摘要】')
     // the knowledge BODY must reach the model (a render that only showed the
     // SPO title would hide exactly what recall exists to retrieve)
     expect(text).toContain('升级前先完整备份数据库。')
@@ -107,30 +103,25 @@ describe('memory tools user scope', () => {
     expect(text).toContain('- [f-name-1] 用户名字: 小强哥 *(semantic)*')
   })
 
-  it('memory_summary fetches the aggregate summary under the fallback scope', async () => {
+  it('memory_summary fetches the injected compact summary under the fallback scope', async () => {
     const { bridge, registered } = setup()
     const summary = registered.find((d) => d.name === 'memory_summary')!
     expect(summary).toBeTruthy()
-    bridge.call.mockResolvedValue(
-      '# 摘要 (Summary) — global\n\n## global (v3)\n\n职业: 工程师\n\n'
-      + '> ⚠ 另有 1 条长文知识（SOP/few-shot）未展开正文，需要时用 memory_recall 检索，'
-      + '或直接查看 fact_id: f-sop\n'
-      + '> 覆盖 2 条活跃事实 · fact_id: f-job, f-sop',
-    )
+    bridge.call.mockResolvedValue('决策规则\n- 一条规则\n\n属性: 工程师')
 
     const result = (await summary.execute({}, execWithSession('session-YYY'))) as any
     const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
     expect(method).toBe('summary')
     expect(params.user_id).toBe('global')
-    expect(result.text).toContain('职业: 工程师')
+    // The injected summary is the compact depth (no fact_ids).
+    expect(params.detail).toBe(false)
+    expect(result.text).toContain('属性: 工程师')
 
     const rendered = summary.output!.render!({}, result) as Array<{ text: string }>
-    // drill-down pointers must survive to the model
-    expect(rendered[0]!.text).toContain('未展开正文')
-    expect(rendered[0]!.text).toContain('fact_id: f-job, f-sop')
+    expect(rendered[0]!.text).toContain('决策规则')
   })
 
-  it('memory_stats / memory_user_md / memory_memory_md use the fallback user scope', async () => {
+  it('memory_stats / memory_user_md / memory_summary_detail use the fallback user scope', async () => {
     const { bridge, registered } = setup()
     bridge.call.mockResolvedValue({})
 
@@ -142,22 +133,22 @@ describe('memory tools user scope', () => {
     await userMd.execute({}, execWithSession('session-DDD'))
     expect(bridge.call.mock.calls.at(-1)![1]!.user_id).toBe('global')
 
-    const memMd = registered.find((d) => d.name === 'memory_memory_md')!
-    await memMd.execute({}, execWithSession('session-DDD'))
+    const detail = registered.find((d) => d.name === 'memory_summary_detail')!
+    await detail.execute({}, execWithSession('session-DDD'))
     expect(bridge.call.mock.calls.at(-1)![1]!.user_id).toBe('global')
   })
 
-  it('memory_memory_md asks for the detail depth, not the injected compact one', async () => {
+  it('memory_summary_detail asks for the detail depth, not the injected compact one', async () => {
     const { bridge, registered } = setup()
     bridge.call.mockResolvedValue('')
 
-    const memMd = registered.find((d) => d.name === 'memory_memory_md')!
-    await memMd.execute({}, execWithSession('session-DDD-2'))
+    const detail = registered.find((d) => d.name === 'memory_summary_detail')!
+    await detail.execute({}, execWithSession('session-DDD-2'))
 
     // The tool/settings view keeps fact_id references; only the frozen prompt
     // snapshot renders the compact digest.
     const [method, params] = bridge.call.mock.calls.at(-1) as [string, Record<string, unknown>]
-    expect(method).toBe('memory_md')
+    expect(method).toBe('summary')
     expect(params.detail).toBe(true)
   })
 

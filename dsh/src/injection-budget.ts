@@ -1,5 +1,5 @@
 /**
- * The `memory.md` injection budget: one authority shared by both halves.
+ * The `summary` injection budget: one authority shared by both halves.
  *
  * The Node half clamps whatever reaches the runtime before it is handed to the
  * Python renderer; the browser half needs the very same bounds to render the
@@ -16,20 +16,20 @@
  */
 
 /** Budget used when nothing (neither settings nor composition) specifies one. */
-export const DEFAULT_INJECTED_MD_TOKENS = 800
+export const DEFAULT_INJECTED_SUMMARY_TOKENS = 800
 
 /**
  * Lower bound. Below this the renderer cannot fit even its "everything was
  * omitted" footer, so the snapshot would degrade to a single notice line —
  * never useful as a configured value.
  */
-export const MIN_INJECTED_MD_TOKENS = 100
+export const MIN_INJECTED_SUMMARY_TOKENS = 100
 
 /**
  * Upper bound. Far above any sane working set, but it exists so a typo (or a
  * pasted number) cannot silently inflate every request of every session.
  */
-export const MAX_INJECTED_MD_TOKENS = 20_000
+export const MAX_INJECTED_SUMMARY_TOKENS = 20_000
 
 /**
  * The gear ladder the settings panel's slider snaps to, smallest first.
@@ -42,7 +42,7 @@ export const MAX_INJECTED_MD_TOKENS = 20_000
  * whole store" (12000); the budget is a *cap*, not a target, so a large gear
  * costs nothing while the store is smaller than it.
  */
-export const INJECTED_MD_TOKEN_PRESETS = [300, 800, 1500, 3000, 6000, 12_000] as const
+export const INJECTED_SUMMARY_TOKEN_PRESETS = [300, 800, 1500, 3000, 6000, 12_000] as const
 
 /**
  * Index of the ladder gear nearest to `value`.
@@ -55,14 +55,14 @@ export const INJECTED_MD_TOKEN_PRESETS = [300, 800, 1500, 3000, 6000, 12_000] as
  * the default's gear rather than to `NaN`.
  *
  * @param value - The configured budget, from settings or the composition entry.
- * @returns A valid index into {@link INJECTED_MD_TOKEN_PRESETS}.
+ * @returns A valid index into {@link INJECTED_SUMMARY_TOKEN_PRESETS}.
  */
-export function nearestInjectedMdPresetIndex(value: unknown): number {
-  const tokens = clampInjectedMdTokens(value)
+export function nearestInjectedSummaryPresetIndex(value: unknown): number {
+  const tokens = clampInjectedSummaryTokens(value)
   let best = 0
   let bestDelta = Number.POSITIVE_INFINITY
-  for (let i = 0; i < INJECTED_MD_TOKEN_PRESETS.length; i += 1) {
-    const delta = Math.abs(INJECTED_MD_TOKEN_PRESETS[i]! - tokens)
+  for (let i = 0; i < INJECTED_SUMMARY_TOKEN_PRESETS.length; i += 1) {
+    const delta = Math.abs(INJECTED_SUMMARY_TOKEN_PRESETS[i]! - tokens)
     if (delta < bestDelta) {
       bestDelta = delta
       best = i
@@ -88,12 +88,12 @@ export function nearestInjectedMdPresetIndex(value: unknown): number {
  * @param value - The candidate budget, from settings or the composition entry.
  * @returns An integer within `[MIN, MAX]`; the default when not provided.
  */
-export function clampInjectedMdTokens(value: unknown): number {
-  if (value === undefined || value === null) return DEFAULT_INJECTED_MD_TOKENS
-  if (typeof value === 'string' && value.trim() === '') return DEFAULT_INJECTED_MD_TOKENS
+export function clampInjectedSummaryTokens(value: unknown): number {
+  if (value === undefined || value === null) return DEFAULT_INJECTED_SUMMARY_TOKENS
+  if (typeof value === 'string' && value.trim() === '') return DEFAULT_INJECTED_SUMMARY_TOKENS
   const tokens = Math.trunc(Number(value))
-  if (!Number.isFinite(tokens)) return DEFAULT_INJECTED_MD_TOKENS
-  if (tokens < MIN_INJECTED_MD_TOKENS) return MIN_INJECTED_MD_TOKENS
-  if (tokens > MAX_INJECTED_MD_TOKENS) return MAX_INJECTED_MD_TOKENS
+  if (!Number.isFinite(tokens)) return DEFAULT_INJECTED_SUMMARY_TOKENS
+  if (tokens < MIN_INJECTED_SUMMARY_TOKENS) return MIN_INJECTED_SUMMARY_TOKENS
+  if (tokens > MAX_INJECTED_SUMMARY_TOKENS) return MAX_INJECTED_SUMMARY_TOKENS
   return tokens
 }

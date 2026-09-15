@@ -2,9 +2,9 @@
 
 A backup is a *lossy-but-faithful* snapshot of the derived views the user can
 read and edit in the UI: the active atomic facts (with their SPO triples, type,
-content body, importance and timestamps), the user-profile rows, and the
-current aggregate summaries. It never carries credentials or other secrets —
-the library only stores facts and derived views.
+content body, importance and timestamps) and the user-profile rows. It never
+carries credentials or other secrets — the library only stores facts and
+derived views.
 
 Restore uses "replace semantics": the target user's active facts and profile
 rows are soft-retracted first, then the snapshot is written back as new
@@ -31,12 +31,12 @@ from .retriever import segment_text
 
 # Snapshot format version, bumped on any structurally breaking change.
 #
-# The profile rows carry an optional `pinned` flag (schema v4). It is additive:
-# an older snapshot without the key restores as unpinned, and an older reader of
-# a newer snapshot simply ignores the extra key, so the version stays put — a
-# bump here would make the version-equality check in `validate_backup` reject
-# every snapshot users already exported.
-BACKUP_VERSION = 1
+# v2: the derived summary layer was removed entirely (summarizer.py + the
+# `summaries` table were dropped in favour of the on-demand `summary` view), so
+# backups no longer carry a `summaries` key. `validate_backup` requires the
+# version to match exactly and rejects older snapshots (which still embed a
+# `summaries` list from the deleted layer) instead of silently importing them.
+BACKUP_VERSION = 2
 
 # Column groups round-tripped through a snapshot. `user_id` is intentionally
 # excluded from facts/profile: restore re-targets everything to the caller's
@@ -55,9 +55,9 @@ _PROFILE_KEYS = (
 def export_memory(conn: sqlite3.Connection, user_id: str) -> dict:
     """Serialize one user's active memory to a portable dict.
 
-    Only ``active`` facts are exported (retracted / superseded are excluded),
-    and only non-stale summaries. Serialization is deterministic (ordered
-    queries), so two exports of unchanged memory compare equal.
+    Only ``active`` facts are exported (retracted / superseded are excluded).
+    Serialization is deterministic (ordered queries), so two exports of
+    unchanged memory compare equal.
 
     Args:
         conn: The SQLite connection.
@@ -65,7 +65,7 @@ def export_memory(conn: sqlite3.Connection, user_id: str) -> dict:
 
     Returns:
         A dict shaped for ``json.dumps``:
-        ``{"version", "exported_at", "user_id", "facts", "profile", "summaries"}``.
+        ``{"version", "exported_at", "user_id", "facts", "profile"}``.
     """
     fact_rows = conn.execute(
         "SELECT fact_id, session_id, subject, predicate, object, qualifiers, "
@@ -84,24 +84,12 @@ def export_memory(conn: sqlite3.Connection, user_id: str) -> dict:
     ).fetchall()
     profile = [{k: r[k] for k in _PROFILE_KEYS} for r in profile_rows]
 
-    summary_rows = conn.execute(
-        "SELECT scope, theme, text, fact_ids, version FROM summaries "
-        "WHERE user_id = ? AND stale = 0 ORDER BY scope",
-        (user_id,),
-    ).fetchall()
-    summaries = [
-        {"scope": r["scope"], "theme": r["theme"], "text": r["text"],
-         "fact_ids": r["fact_ids"], "version": r["version"]}
-        for r in summary_rows
-    ]
-
     return {
         "version": BACKUP_VERSION,
         "exported_at": now_ms(),
         "user_id": user_id,
         "facts": facts,
         "profile": profile,
-        "summaries": summaries,
     }
 
 
@@ -121,7 +109,7 @@ def validate_backup(payload: Any) -> Dict[str, Any]:
         raise ValueError(
             f"unsupported backup version {version!r} (expected {BACKUP_VERSION})"
         )
-    for key in ("facts", "profile", "summaries"):
+    for key in ("facts", "profile"):
         if not isinstance(payload.get(key), list):
             raise ValueError(f"backup field {key!r} must be a list")
     return payload
@@ -164,10 +152,6 @@ async def import_memory(
         )
         conn.execute(
             "DELETE FROM user_profile WHERE user_id = ?",
-            (user_id,),
-        )
-        conn.execute(
-            "UPDATE summaries SET stale = 1 WHERE user_id = ?",
             (user_id,),
         )
 
