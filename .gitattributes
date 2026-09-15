@@ -1,0 +1,12 @@
+# The repo's canonical text form is LF, enforced at checkout too: no smudge
+# boundary between working tree and repository, so byte-level gates (the
+# bilingual pairing record's blob hashes, the line-alignment check) see one
+# form on every host. Without this, core.autocrlf=true checks the README pair
+# out as CRLF and the hashes recorded in README.i18n.yaml no longer match the
+# bytes on disk, so a fresh clone reads as a stale pairing record.
+* text=auto eol=lf
+
+# Pairing records are generated from the confirmed owner-blob pair. The
+# worktree-local installer registers the fail-closed driver command; without
+# that installer this name is inert and merges use the default 3-way merge.
+*.i18n.yaml merge=dsh-translation-pairing
