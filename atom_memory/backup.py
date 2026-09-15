@@ -130,6 +130,16 @@ async def import_memory(
     (SQLite is not thread-safe across threads), while the CPU-bound embedding
     calls run in worker threads — mirroring the library's own write path.
 
+    **Atomicity across the async/worker boundary.** Every fact's embedding is
+    computed *up front*, before the transaction opens. The ``AtomMem`` store and
+    its worker share the single connection on the same event-loop thread, and
+    the worker commits its own writes mid-task; had the transaction stayed open
+    across an ``await asyncio.to_thread(embed, ...)`` (as this function once
+    did), the worker's ``commit()`` would have committed this import's
+    partial writes too — breaking the "failed import leaves memory untouched"
+    guarantee. Precomputing all embeddings first makes the transaction purely
+    synchronous, so no worker write can interleave with it.
+
     Args:
         conn: The SQLite connection (must stay on one thread).
         target_user_id: The user whose memory is replaced.
@@ -141,6 +151,19 @@ async def import_memory(
     """
     user_id = target_user_id
     now = now_ms()
+
+    # Precompute every fact's embedding off-thread, before any DB work. This is
+    # the only place we await, so the transaction below never spans an await.
+    prepared_facts: list = []
+    for f in payload.get("facts", []):
+        subject = str(f.get("subject", ""))
+        predicate = str(f.get("predicate", ""))
+        obj = str(f.get("object", ""))
+        content = f.get("content") or None
+        searchable = (f"{subject} {predicate} {obj} " + (content or "")).strip()
+        embed_text = searchable or obj
+        blob = await asyncio.to_thread(embed_func, embed_text)
+        prepared_facts.append((f, blob))
 
     with conn:
         # Replace semantics: clear the user's live derived state first, then
@@ -156,8 +179,8 @@ async def import_memory(
         )
 
         facts_written = 0
-        for f in payload.get("facts", []):
-            await _write_fact(conn, user_id, f, embed_func, now)
+        for f, blob in prepared_facts:
+            _write_fact(conn, user_id, f, blob, now)
             facts_written += 1
 
         profile_written = 0
@@ -187,18 +210,19 @@ async def import_memory(
     return {"facts_written": facts_written, "profile_written": profile_written}
 
 
-async def _write_fact(
+def _write_fact(
     conn: sqlite3.Connection,
     user_id: str,
     f: dict,
-    embed_func: Callable[[str], bytes],
+    blob: bytes,
     now: int,
 ) -> str:
     """Insert one snapshot fact as a fresh row mirroring the library writer.
 
     This mirrors the shape of ``worker._persist_fact`` (user_explicit source,
     active status, regenerated id, re-embedded vector) so imported facts are
-    first-class entries.
+    first-class entries. The embedding ``blob`` is supplied precomputed by the
+    caller (outside the transaction) so this stays synchronous.
     """
     fact_id = str(uuid.uuid4())
     subject = str(f.get("subject", ""))
@@ -206,9 +230,6 @@ async def _write_fact(
     obj = str(f.get("object", ""))
     content = f.get("content") or None
     searchable = (f"{subject} {predicate} {obj} " + (content or "")).strip()
-    # Embedding is CPU-bound model inference; run it in a worker thread.
-    embed_text = searchable or obj
-    blob = await asyncio.to_thread(embed_func, embed_text)
 
     session_id = str(f.get("session_id", "restore"))
     ftype = str(f.get("type", "semantic") or "semantic")

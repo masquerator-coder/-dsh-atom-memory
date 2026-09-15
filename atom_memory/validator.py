@@ -254,13 +254,58 @@ def _check_idempotency(
         (key,),
     ).fetchone()
     if row is not None:
+        # ``suppressed``'s contract is "the existing *fact_id* that already
+        # represents this candidate". The prior row is a *candidate*, not a
+        # fact, but when that claim has since been applied to an active fact of
+        # the same owner + SPO, handing back the real ``fact_id`` lets the
+        # worker record the reuse-reinforcement (see worker._process_extract):
+        # restating an already-stored claim is the cleanest reuse evidence the
+        # library can observe, and this idempotency-key dedup fires *before* the
+        # same-SPO path in ``_check_conflict``, so without this the signal would
+        # never land. When no such active fact exists (the prior candidate was
+        # skipped, or the fact was retracted) there is nothing to reinforce, and
+        # ``suppressed`` is left unset for a pure suppress — never a candidate id
+        # masquerading as a fact id.
+        fact = conn.execute(
+            "SELECT fact_id FROM facts WHERE user_id = ? AND subject = ? "
+            "AND predicate = ? AND object = ? AND status = 'active' "
+            "ORDER BY created_at ASC LIMIT 1",
+            (
+                candidate.user_id,
+                candidate.subject,
+                candidate.predicate,
+                candidate.object,
+            ),
+        ).fetchone()
         return ValidationResult.fail(
             "idempotent",
             f"idempotency_key already used by candidate {row['candidate_id']}",
             candidate.candidate_id,
-            suppressed=row["candidate_id"],
+            suppressed=fact["fact_id"] if fact is not None else None,
         )
     return ValidationResult.pass_(candidate.candidate_id)
+
+
+def is_multi_valued(predicate: str, memory_type: str) -> bool:
+    """Whether an SPO (predicate, type) may legitimately hold many objects.
+
+    A predicate is multi-valued when it is a preference/collection predicate
+    (``MULTI_VALUED_PREDICATES``), an episodic event, or a knowledge item
+    (``ALL_KNOWLEDGE``) — under any of these a *different* object is an
+    independent claim, not a contradiction. Everything else is a single-valued
+    attribute whose object may only have one active value.
+
+    This is the single authority for the rule, shared by the write-path conflict
+    check (:func:`_check_conflict`) and the read-path conflict report
+    (:func:`atom_memory.api.AtomMem.recall`), so both stay in agreement.
+    """
+    if predicate in MULTI_VALUED_PREDICATES:
+        return True
+    if memory_type == "episodic" or predicate == "事件":
+        return True
+    if memory_type in ALL_KNOWLEDGE:
+        return True
+    return False
 
 
 def _check_conflict(
@@ -294,14 +339,9 @@ def _check_conflict(
     cand_obj = (candidate.object or "").strip()
     cand_neg = _has_negation(candidate.qualifiers)
     cand_type = getattr(candidate, "type", "semantic") or "semantic"
-    episodic = cand_type == "episodic" or candidate.predicate == "事件"
     # Knowledge items stay independent under a shared predicate: a second SOP or
     # lesson is a new item, not a contradiction of the first.
-    multi_valued = (
-        candidate.predicate in MULTI_VALUED_PREDICATES
-        or episodic
-        or cand_type in ALL_KNOWLEDGE
-    )
+    multi_valued = is_multi_valued(candidate.predicate, cand_type)
 
     rows = conn.execute(
         "SELECT fact_id, object, qualifiers FROM facts "

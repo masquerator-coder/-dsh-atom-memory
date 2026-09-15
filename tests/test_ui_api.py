@@ -256,3 +256,76 @@ def test_validate_backup_rejects_bad_shape():
         validate_backup({"version": 999, "facts": [], "profile": []})
     with pytest.raises(ValueError):
         validate_backup({"version": BACKUP_VERSION, "facts": "nope", "profile": []})
+
+
+def test_recall_reports_single_valued_conflicts(tmp_path, monkeypatch):
+    """recall() surfaces contradictory active facts under a single-valued
+    predicate, instead of the old hardcoded empty ``conflicts`` stub."""
+    mem = _make(tmp_path, monkeypatch)
+
+    async def scenario():
+        await mem.start()
+        # Same (用户, 职业) — single-valued attribute — with two different
+        # objects: a contradiction recall should report.
+        _insert_fact(mem, "f_a", "用户", "职业", "工程师", created_at=1)
+        _insert_fact(mem, "f_b", "用户", "职业", "设计师", created_at=2)
+        # A multi-valued preference with two objects is NOT a conflict.
+        _insert_fact(mem, "f_like1", "用户", "偏好", "黑咖啡")
+        _insert_fact(mem, "f_like2", "用户", "偏好", "绿茶")
+
+        r = await mem.recall("u1", "职业", token_budget=2000)
+        conflicts = r["conflicts"]
+        assert len(conflicts) == 1, "one contradictory pair reported"
+        pair = conflicts[0]
+        assert pair["subject"] == "用户"
+        assert pair["predicate"] == "职业"
+        assert {pair["left"], pair["right"]} == {"f_a", "f_b"}
+        assert {pair["object_left"], pair["object_right"]} == {"工程师", "设计师"}
+
+        # The preference objects must not have leaked into conflicts.
+        csub = {(c["left"], c["right"]) for c in conflicts}
+        assert ("f_like1", "f_like2") not in csub
+        await mem.stop()
+
+    _run(scenario())
+
+
+def test_recall_conflicts_ignore_retracted_and_multi_valued(tmp_path, monkeypatch):
+    """Conflicts only consider active rows, and only under single-valued keys."""
+    mem = _make(tmp_path, monkeypatch)
+
+    async def scenario():
+        await mem.start()
+        _insert_fact(mem, "f1", "用户", "职业", "工程师", created_at=1)
+        _insert_fact(mem, "f2", "用户", "职业", "设计师", created_at=2)
+        # Retracted duplicate must not be reported.
+        _insert_fact(mem, "f_old", "用户", "职业", "经理", created_at=3)
+        mem.db.execute("UPDATE facts SET status='retracted' WHERE fact_id='f_old'")
+        # A knowledge (multi-valued) item sharing a predicate is independent.
+        _insert_fact(mem, "f_k1", "用户", "发布流程", "A", type="sop")
+        _insert_fact(mem, "f_k2", "用户", "发布流程", "B", type="sop")
+        _insert_fact(mem, "f_ev1", "用户", "事件", "发布完成", type="episodic")
+        _insert_fact(mem, "f_ev2", "用户", "事件", "回滚", type="episodic")
+        mem.db.commit()
+
+        r = await mem.recall("u1", "职业", token_budget=2000)
+        pairs = {(c["left"], c["right"]) for c in r["conflicts"]}
+        assert len(r["conflicts"]) == 1, "only the single-valued 职业 pair"
+        assert ("f1", "f2") in pairs
+        assert not any("f_old" in p for p in pairs)
+        assert not any("发布流程" in c["predicate"] for c in r["conflicts"])
+        assert not any("事件" in c["predicate"] for c in r["conflicts"])
+        await mem.stop()
+
+    _run(scenario())
+
+
+def test_is_multi_valued_reflects_the_conflict_rule():
+    from atom_memory.validator import is_multi_valued
+
+    # Collection predicates and episodic/knowledge types are multi-valued.
+    assert is_multi_valued("偏好", "semantic") is True
+    assert is_multi_valued("职业", "episodic") is True
+    assert is_multi_valued("职业", "sop") is True
+    # An ordinary single-valued attribute is not.
+    assert is_multi_valued("职业", "semantic") is False

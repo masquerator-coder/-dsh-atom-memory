@@ -81,7 +81,11 @@ def test_idempotency_suppresses_duplicate_key():
         c = make(candidate_id="c_new", idempotency_key="key-abc")
         r = validate(c, conn=conn)
         assert not r.ok and r.kind == "idempotent"
-        assert r.suppressed == "c_existing"
+        # The duplicate is a *candidate*, not a fact: `suppressed` (whose
+        # contract is "the existing fact_id this candidate represents") must be
+        # left unset so the worker never tries to reinforce a candidate id as a
+        # fact_id (see worker._process_extract).
+        assert r.suppressed is None
     finally:
         conn.close()
 
@@ -99,6 +103,53 @@ def test_new_idempotency_key_passes():
 def test_no_key_passes_idempotency():
     r = validate(make(idempotency_key=None))
     assert r.ok
+
+
+def test_idempotency_key_resolves_applied_fact_for_reinforcement():
+    """An idempotent duplicate whose claim was already applied to an active
+    fact reports the real ``fact_id`` in ``suppressed``, so the worker's
+    reuse-reinforcement can fire (restating a stored claim is the cleanest
+    reuse evidence)."""
+    conn = connect_for_tests()
+    try:
+        conn.execute(
+            "INSERT INTO facts(fact_id, user_id, session_id, subject, predicate, "
+            "object, status, observed_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'active', 1, 1)",
+            ("f_applied", "u1", "s1", "用户", "偏好", "黑咖啡",),
+        )
+        conn.execute(
+            "INSERT INTO fact_candidates(candidate_id, user_id, session_id, "
+            "turn_id, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            ("c_existing", "u1", "s1", 0, "key-abc", 1),
+        )
+        conn.commit()
+        c = make(candidate_id="c_new", idempotency_key="key-abc", object="黑咖啡")
+        r = validate(c, conn=conn)
+        assert not r.ok and r.kind == "idempotent"
+        assert r.suppressed == "f_applied", "must carry the real fact_id, not a candidate id"
+    finally:
+        conn.close()
+
+
+def test_idempotency_key_with_no_fact_stays_pure_suppress():
+    """When the prior candidate never became an active fact, `suppressed` is
+    left unset (nothing to reinforce) — never a candidate id masquerading as a
+    fact id."""
+    conn = connect_for_tests()
+    try:
+        conn.execute(
+            "INSERT INTO fact_candidates(candidate_id, user_id, session_id, "
+            "turn_id, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            ("c_existing", "u1", "s1", 0, "key-abc", 1),
+        )
+        conn.commit()
+        c = make(candidate_id="c_new", idempotency_key="key-abc", object="黑咖啡")
+        r = validate(c, conn=conn)
+        assert not r.ok and r.kind == "idempotent"
+        assert r.suppressed is None
+    finally:
+        conn.close()
 
 
 # ---- conflict ---------------------------------------------------------------

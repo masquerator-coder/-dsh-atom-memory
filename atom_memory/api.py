@@ -31,6 +31,7 @@ from .reinforce import (
 )
 from .retriever import Retriever, estimate_tokens, segment_text
 from .summary import generate_summary
+from .validator import is_multi_valued
 from .worker import Worker
 
 logger = logging.getLogger(__name__)
@@ -195,7 +196,6 @@ class AtomMem:
             raise RuntimeError("AtomMem is not started; call start() first")
 
         ranked = await self.retriever.search(user_id, query, top_k=top_k)
-
         facts: list = []
         used = 0
         for fact in ranked:
@@ -238,10 +238,67 @@ class AtomMem:
         return {
             "facts": facts,
             "pending": pending,
-            "conflicts": [],
+            "conflicts": self._load_conflicts(user_id),
             "token_count": used,
             "trace_id": str(uuid.uuid4()),
         }
+
+    def _load_conflicts(self, user_id: str) -> list:
+        """Report a user's *active* contradictory fact pairs, best-effort.
+
+        A fact is in conflict when it and another active fact of the same user
+        share a (subject, predicate) that is *single-valued* (see
+        :func:`~atom_memory.validator.is_multi_valued`) yet hold different
+        objects — exactly the condition the write-path validator rejects a new
+        candidate for (:func:`~atom_memory.validator._check_conflict`). These
+        normally arrive only through a legacy/imported row, since the write path
+        blocks them; surfacing them here lets the model/user see that memory
+        holds two values where it should hold one.
+
+        Returns:
+            A list of ``{"left": fact_id, "right": fact_id, "subject",
+            "predicate", "object_left", "object_right"}`` — one entry per
+            conflicting *pair*, each fact_id appearing on the left or the right
+            (never both directions). Empty when memory holds no such pair.
+        """
+        if self.db is None:
+            return []
+        rows = self.db.execute(
+            "SELECT fact_id, subject, predicate, object, type FROM facts "
+            "WHERE user_id = ? AND status = 'active' ORDER BY created_at ASC",
+            (user_id,),
+        ).fetchall()
+        # Group active facts by their single-valued (subject, predicate) key.
+        groups: dict = {}
+        for r in rows:
+            memory_type = r["type"] or "semantic"
+            if is_multi_valued(str(r["predicate"]), memory_type):
+                continue
+            groups.setdefault((r["subject"], r["predicate"]), []).append(r)
+
+        conflicts: list = []
+        for (subject, predicate), members in groups.items():
+            # Distinct objects within one single-valued key -> contradiction.
+            distinct: dict = {}
+            for r in members:
+                obj = r["object"]
+                distinct.setdefault(obj, r["fact_id"])
+            if len(distinct) < 2:
+                continue
+            ordered_ids = list(distinct.values())
+            for i in range(len(ordered_ids)):
+                for j in range(i + 1, len(ordered_ids)):
+                    conflicts.append(
+                        {
+                            "left": ordered_ids[i],
+                            "right": ordered_ids[j],
+                            "subject": subject,
+                            "predicate": predicate,
+                            "object_left": list(distinct.keys())[i],
+                            "object_right": list(distinct.keys())[j],
+                        }
+                    )
+        return conflicts
 
     def _load_pending(self, user_id: str) -> list:
         """Load still-pending fact candidates for a user (candidate_id only)."""

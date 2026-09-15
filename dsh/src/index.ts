@@ -75,6 +75,8 @@ function seedRuntime(config: ConfigShape): LiveRuntime {
 export function apply(ctx: Context, config: ConfigShape): void {
   const runtime = new Runtime(seedRuntime(config))
 
+  let startTimer: ReturnType<typeof setTimeout> | undefined
+
   const bridge = new PythonBridge({
     spawnProcess: () => defaultSpawn(config.pythonBin),
     timeoutMs: config.rpcTimeoutMs,
@@ -82,10 +84,20 @@ export function apply(ctx: Context, config: ConfigShape): void {
       ctx.logger(`[atom-memory] ${evt.evt as string} ${evt.candidate_id as string ?? ''}`.trim())
     },
     onLog: (msg) => ctx.logger(`[atom-memory] ${msg}`),
+    // Runtime crash after a healthy start: try to bring memory back with a
+    // fresh attempt budget (the budget is reset on every successful start).
+    onExit: () => {
+      started.value = false
+      started.attempt = 0
+      if (config.autostart !== false && runtime.isEnabled()) tryStart()
+    },
   })
 
   // All registration is reversible: the child process is killed on unload.
-  ctx.effect(() => () => { void bridge.dispose() })
+  const lifecycleDisposers: Array<() => void> = []
+  lifecycleDisposers.push(() => { void bridge.dispose() })
+  lifecycleDisposers.push(() => { if (startTimer !== undefined) { clearTimeout(startTimer); startTimer = undefined } })
+  for (const d of lifecycleDisposers) ctx.effect(() => d)
 
   const started = {
     value: false,
@@ -94,20 +106,24 @@ export function apply(ctx: Context, config: ConfigShape): void {
   }
   const tryStart = (): void => {
     if (started.value) return
-    if (started.attempt > 3) {
-      ctx.logger('[atom-memory] python bridge failed to start; memory offline')
+    if (started.attempt >= 3) {
+      ctx.logger('[atom-memory] python bridge failed to (re)start; memory offline')
       return
     }
     started.attempt += 1
     void bridge.start(buildStartParams(config), undefined)
       .then(() => {
         started.value = true
+        // A healthy start resets the budget, so a later runtime crash gets a
+        // fresh 3-attempt budget instead of being permanently blocked.
+        started.attempt = 0
         started.error = undefined
         ctx.logger(`[atom-memory] bridge ready (${(config.dbPath ?? '').trim() || 'db'})`)
       })
       .catch((err: Error) => {
+        started.value = false
         started.error = err
-        setTimeout(tryStart, 1000)
+        startTimer = setTimeout(tryStart, 1000)
       })
   }
   if (config.autostart !== false) tryStart()

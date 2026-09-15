@@ -253,11 +253,13 @@ describe('MemorySettingsSection client render', () => {
       render(createElement(MemorySettingsSection, props))
     })
     const group = screen.getByText('记忆内容').closest('fieldset')!
-    // The row wraps the four buttons, each as a `.atom-memory-toggle` anchor.
+    // The row wraps the action buttons, each as a `.atom-memory-toggle` anchor.
     const row = group.querySelector('.atom-memory-content-actions')!
     expect(row).toBeTruthy()
     const toggles = Array.from(row.querySelectorAll('.atom-memory-toggle'))
-    expect(toggles).toHaveLength(4)
+    // 查看摘要 / 编辑画像 / 编辑记忆 — the three content actions that exist
+    // today (no fourth action has been added).
+    expect(toggles).toHaveLength(3)
     // The row is horizontal; every toggle anchors a hidden hover tooltip.
     for (const toggle of toggles) {
       expect(toggle.querySelector('.atom-memory-btn')).toBeTruthy()
@@ -344,17 +346,14 @@ describe('MemorySettingsSection client render', () => {
       fireEvent.click(screen.getByText('编辑记忆'))
     })
     await act(async () => {})
-    // A freshly added row (no fact_id yet) must keep its identity too.
-    await act(async () => {
-      fireEvent.click(screen.getByText('添加一行'))
-    })
-    await act(async () => {})
-
+    // The facts editor edits/deletes existing rows but has no "add row": the
+    // facts table has no create endpoint (new facts come from conversation
+    // capture), so the one seeded fact row is the only row present.
     const dataRows = screen.getAllByRole('row').slice(1)
-    expect(dataRows).toHaveLength(2)
+    expect(dataRows).toHaveLength(1)
     for (const row of dataRows) {
       const cells = within(row).getAllByRole('textbox') as HTMLInputElement[]
-      expect(cells).toHaveLength(4)
+      expect(cells).toHaveLength(4) // subject / predicate / object / content
       for (const input of cells) {
         await typeInto(input, 'XYZ')
       }

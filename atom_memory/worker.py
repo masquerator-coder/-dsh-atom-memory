@@ -147,6 +147,19 @@ class Worker:
     def start(self) -> None:
         """Begin draining the queue in a background asyncio task."""
         if self._task is None or self._task.done():
+            # Reclaim any task a previous worker instance left in `running` —
+            # from a hard crash, or from a graceful `stop()` that cancelled the
+            # drain mid-task. A freshly-started worker owns nothing in flight,
+            # so those rows are orphaned; if left `running` they are never
+            # selected again (the drain only claims `pending`) and the unit of
+            # work is lost forever. Resetting them to `pending` re-enqueues them
+            # under the same at-least-once retry semantics the worker already
+            # has for failed tasks.
+            self.conn.execute(
+                "UPDATE task_queue SET status = ? WHERE status = ?",
+                (TASK_PENDING, TASK_RUNNING),
+            )
+            self.conn.commit()
             self._task = asyncio.create_task(self._run(), name="dsh-worker")
 
     async def stop(self) -> None:
@@ -163,6 +176,11 @@ class Worker:
 
     async def _run(self) -> None:
         while True:
+            # Declared here so the ``CancelledError`` handler below can always
+            # test it safely: if the cancel lands while ``_claim_next_task`` is
+            # executing (before any row is bound), ``task_row`` stays ``None``
+            # and there is nothing to requeue.
+            task_row: Optional[sqlite3.Row] = None
             try:
                 task_row = self._claim_next_task()
                 if task_row is None:
@@ -170,6 +188,17 @@ class Worker:
                     continue
                 await self._handle_task(task_row)
             except asyncio.CancelledError:
+                # The worker was stopped / hard-cancelled mid-task (e.g.
+                # `stop()` or shutdown). ``CancelledError`` is a
+                # ``BaseException``, so ``_handle_task``'s ``except
+                # Exception`` (which would have requeued a *failed* task)
+                # never sees it and the claimed row would otherwise stay
+                # ``running`` forever. The drain only claims ``pending``
+                # rows, so return the in-flight unit of work to ``pending``
+                # before propagating — the next start (or a restart of the
+                # process) will pick it back up instead of losing it.
+                if task_row is not None:
+                    self._requeue_inflight(task_row["task_id"])
                 raise
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("Worker loop error: %s", exc)
@@ -203,6 +232,28 @@ class Worker:
         )
         self.conn.commit()
         return row
+
+    def _requeue_inflight(self, task_id: str) -> None:
+        """Return an in-flight (``running``) task to ``pending`` on interruption.
+
+        Called from the cancellation path so a ``stop()`` / shutdown / hard
+        crash mid-task does not permanently strand the row in ``running`` (the
+        drain only claims ``pending``). The ``status = 'running'`` guard means a
+        task that was already completed/failed — and therefore no longer
+        ``running`` — is never touched. This complements the reclaim-on-``start``
+        in :meth:`start`, which handles rows orphaned by a hard crash that never
+        ran this path.
+        """
+        if self.conn is None:
+            return
+        try:
+            self.conn.execute(
+                "UPDATE task_queue SET status = ? WHERE task_id = ? AND status = ?",
+                (TASK_PENDING, task_id, TASK_RUNNING),
+            )
+            self.conn.commit()
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Failed to requeue in-flight task %s", task_id)
 
     async def _handle_task(self, row: sqlite3.Row) -> None:
         task_id = row["task_id"]

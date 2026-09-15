@@ -9,7 +9,11 @@ class FakeProc {
   write = vi.fn((_chunk: string) => true)
   stdinOn = vi.fn()
   kill = vi.fn(() => true)
-  on = vi.fn()
+  letHandlers = new Map<string, (...a: any[]) => void>()
+  on = vi.fn((evt: string, cb: (...a: any[]) => void) => {
+    this.letHandlers.set(evt, cb)
+    return () => {}
+  })
   pid = 1
   asProcess(): ProcessLike {
     return {
@@ -23,6 +27,7 @@ class FakeProc {
   }
   feedOut(line: string): void { this.out.push(line + '\n') }
   feedErr(line: string): void { this.err.push(line + '\n') }
+  emitExit(code: number | null, signal: unknown): void { this.letHandlers.get('exit')?.(code, signal) }
   lastRequest(): { id: string; method: string; params: Record<string, unknown> } {
     const calls = this.write.mock.calls
     return JSON.parse(calls[calls.length - 1][0])
@@ -100,5 +105,61 @@ describe('PythonBridge', () => {
     await bridge.start({}) // no-op; no extra request beyond the first
     const n = (proc.write as ReturnType<typeof vi.fn>).mock.calls.length
     expect(n).toBeGreaterThan(0)
+  })
+})
+
+describe('bridge lifecycle restart', () => {
+  it('a start failure leaves the bridge reusable (not irreversibly disposed)', async () => {
+    const proc = new FakeProc()
+    const bridge = new PythonBridge({ spawnProcess: () => proc.asProcess() })
+    const p = bridge.start({ db_path: 'x' })
+    const startReq = JSON.parse((proc.write as ReturnType<typeof vi.fn>).mock.calls[0][0])
+    proc.feedOut(JSON.stringify({ id: startReq.id, ok: false, error: 'start failed' }))
+    await expect(p).rejects.toThrow('start failed')
+
+    // Not disposed: a call reports "not running" (a retriable state), not "disposed".
+    await expect(bridge.call('stats', {})).rejects.toThrow('not running')
+
+    // A second start can succeed against a fresh child.
+    const proc2 = new FakeProc()
+    const spy2 = vi.spyOn(bridge as unknown as { spawnProcess: () => unknown }, 'spawnProcess')
+      .mockReturnValue(proc2.asProcess())
+    const p2 = bridge.start({ db_path: 'x' })
+    const req2 = JSON.parse((proc2.write as ReturnType<typeof vi.fn>).mock.calls[0][0])
+    proc2.feedOut(JSON.stringify({ id: req2.id, ok: true, result: { started: true } }))
+    await expect(p2).resolves.toBeUndefined()
+    spy2.mockRestore()
+  })
+
+  it('fires onExit when a healthy process dies at runtime', async () => {
+    const onExit = vi.fn()
+    const proc = new FakeProc()
+    const bridge = new PythonBridge({
+      spawnProcess: () => proc.asProcess(),
+      onExit,
+    })
+    const p = bridge.start({ db_path: 'x' })
+    const req = JSON.parse((proc.write as ReturnType<typeof vi.fn>).mock.calls[0][0])
+    proc.feedOut(JSON.stringify({ id: req.id, ok: true, result: { started: true } }))
+    await p
+
+    proc.emitExit(1, null)
+    expect(onExit).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT fire onExit for a process that dies before start is acked', async () => {
+    const onExit = vi.fn()
+    // The child dies before the start RPC ack: `start()` rejects, and because
+    // `ready` was never true, onExit must not fire (the owner already handles
+    // the rejected promise via its retry loop).
+    const fake = new FakeProc()
+    const bridge = new PythonBridge({
+      spawnProcess: () => fake.asProcess(),
+      onExit,
+    })
+    const p = bridge.start({ db_path: 'x' })
+    fake.emitExit(1, null) // process dies while starting
+    await expect(p).rejects.toBeTruthy()
+    expect(onExit).not.toHaveBeenCalled()
   })
 })

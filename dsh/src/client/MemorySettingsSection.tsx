@@ -198,6 +198,9 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   const [modal, setModal] = useState<'summary' | 'facts' | 'profile'>()
   // Summary fetched content is held in state.data.summary by the controller.
   const [summaryBusy, setSummaryBusy] = useState(false)
+  // Set when the lazy summary fetch rejects, so the modal shows a real failure
+  // instead of a misleading "empty" state (a rejection is never "no memory").
+  const [summaryError, setSummaryError] = useState<string>()
 
   // "手动指定模型" selection: the settings document only stores
   // `extractionModel {provider, model}`, so tracking the user's mode choice
@@ -223,7 +226,14 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
     setModal('summary')
     if (state.data.summary === undefined) {
       setSummaryBusy(true)
-      void props.fetchSummary().finally(() => setSummaryBusy(false))
+      setSummaryError(undefined)
+      // The controller sets its own `lastError` and rethrows, so the modal's
+      // failure state is driven here (summaryError) rather than by the render
+      // path — never leave the rejection unhandled.
+      void props.fetchSummary()
+        .then(() => setSummaryError(undefined))
+        .catch((err) => setSummaryError((err as Error)?.message ?? String(err)))
+        .finally(() => setSummaryBusy(false))
     }
   }
 
@@ -453,8 +463,15 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
                 const a = document.createElement('a')
                 a.href = url
                 a.download = 'atom-memory-backup.json'
+                document.body.appendChild(a)
                 a.click()
-                URL.revokeObjectURL(url)
+                // Revoke only after the download has had a chance to start;
+                // revoking synchronously right after click() can abort the
+                // export in some engines (esp. Firefox/Safari).
+                setTimeout(() => {
+                  document.body.removeChild(a)
+                  URL.revokeObjectURL(url)
+                }, 0)
                 setStatus('✔ ' + new Date().toLocaleString())
                 setPhase('idle')
               })
@@ -490,6 +507,7 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
           t={t}
           busy={summaryBusy}
           content={state.data.summary}
+          error={summaryError}
           onClose={() => setModal(undefined)}
         />
       ) : null}
@@ -550,16 +568,20 @@ function SummaryModal(props: {
   t: RowTranslate
   busy: boolean
   content?: string
+  /** Set when the lazy summary fetch rejected; rendered instead of "empty". */
+  error?: string
   onClose: () => void
 }) {
-  const { t, busy, content, onClose } = props
+  const { t, busy, content, error, onClose } = props
   return (
     <Modal t={t} title={t('summaryHeader')} onClose={onClose}>
       {busy && content === undefined
         ? <p className={css.hint}>{t('summaryLoading')}</p>
-        : content === undefined
-          ? <p className={css.empty}>{t('summaryEmpty')}</p>
-          : <pre className={css.summaryView}>{content}</pre>}
+        : error !== undefined
+          ? <p className={css.empty}>{t('summaryLoadError', { message: error })}</p>
+          : content === undefined
+            ? <p className={css.empty}>{t('summaryEmpty')}</p>
+            : <pre className={css.summaryView}>{content}</pre>}
     </Modal>
   )
 }
@@ -587,12 +609,6 @@ function FactsEditorModal(props: {
 
   const setRow = (index: number, patch: Partial<FactsDraft>) =>
     setRows(prev => prev.map((r, i) => i === index ? { ...r, ...patch } : r))
-
-  const addRow = () =>
-    setRows(prev => [...prev, {
-      uid: nextDraftUid(),
-      fact_id: '', subject: '', predicate: '', object: '', content: '', deleted: false,
-    }])
 
   const save = () => {
     setSaving(true)
@@ -642,7 +658,10 @@ function FactsEditorModal(props: {
           ))}
         </tbody>
       </table>
-      <button type="button" className={css.add} style={{ marginTop: 10 }} onClick={addRow}>{t('addRow')}</button>
+      {/* No "add row" here on purpose: the panel can only *edit / delete* existing
+          facts (there is no create endpoint — new facts come from conversation
+          capture). A row with an empty fact_id would fail the host editFact
+          guard, so offering "add row" would be a silently-broken affordance. */}
     </Modal>
   )
 }

@@ -33,7 +33,10 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 interface MessageEntry {
   seq: number
   text: string
+  /** True once this message has been durably captured (or surrendered to a rescue retry). */
   captured: boolean
+  /** True when the immediate per-message capture failed and is therefore retriable by the nudge/compaction sweep. */
+  failed: boolean
 }
 
 export interface CaptureDeps {
@@ -83,13 +86,22 @@ export function registerCapture(deps: CaptureDeps, opts: CaptureOptions): (() =>
     recent.set(sessionId, list)
   }
 
-  /** Re-scan recent messages for those not yet captured. */
+  /**
+   * Re-scan recent messages, retrying those whose immediate capture failed.
+   *
+   * Only entries marked ``failed`` are retried: an entry whose immediate
+   * capture is still in-flight (neither succeeded nor failed) is skipped so a
+   * rescue cannot duplicate it, and an already-``captured`` one is skipped too.
+   * Each entry is marked ``captured`` *before* the retry is awaited so two
+   * concurrent sweeps (pre-compression + nudge) cannot double-send the same
+   * text.
+   */
   const sweep = async (sessionId: string): Promise<void> => {
     const list = recent.get(sessionId)
     if (!list) return
     for (const entry of list) {
-      if (entry.captured) continue
-      entry.captured = true // mark before awaiting so a retry doesn't duplicate
+      if (entry.captured || !entry.failed) continue
+      entry.captured = true // claim; a concurrent sweep must not resend it
       await capture(entry.text, sessionId).catch(() => { /* best-effort */ })
     }
   }
@@ -104,12 +116,18 @@ export function registerCapture(deps: CaptureDeps, opts: CaptureOptions): (() =>
       const seq = (event as { seq?: unknown }).seq as number | undefined ?? 0
       // Capture every direct user message unconditionally. Whether it holds a
       // fact worth remembering is decided downstream by the LLM extractor (or
-      // the rule fallback), not by a fixed keyword list. `captured` is marked
-      // before submit so the nudge/compaction sweep does not resend it.
-      const entry: MessageEntry = { seq, text, captured: false }
-      entry.captured = true // claimed; sweep must not resubmit
+      // the rule fallback), not by a fixed keyword list. The entry is *not*
+      // marked captured up front: a failed immediate capture must be retriable
+      // by the nudge / pre-compression rescue, otherwise a bridge outage would
+      // silently lose the message forever. Only a successful capture (or a
+      // rescue retry) marks it captured; a failure marks it `failed` so
+      // `sweep` retries it.
+      const entry: MessageEntry = { seq, text, captured: false, failed: false }
       push(session.id, entry)
-      void capture(text, session.id).catch(() => { /* best-effort */ })
+      void capture(text, session.id).then(
+        () => { entry.captured = true },
+        () => { entry.failed = true },
+      )
     }))
   }
 

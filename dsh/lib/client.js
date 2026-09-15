@@ -378,6 +378,7 @@ window.__ModuleLoader__.load({
 				summaryOpen: "查看摘要",
 				summaryLoading: "正在加载…",
 				summaryEmpty: "暂无摘要（没有活跃事实）。",
+				summaryLoadError: "摘要加载失败（{message}）。",
 				profileHeader: "User 画像编辑",
 				profileEmpty: "暂无画像条目。",
 				profileEditBtn: "编辑画像",
@@ -456,6 +457,7 @@ window.__ModuleLoader__.load({
 				summaryOpen: "View summary",
 				summaryLoading: "Loading…",
 				summaryEmpty: "No summary yet (no active facts).",
+				summaryLoadError: "Failed to load the summary ({message}).",
 				profileHeader: "User profile editing",
 				profileEmpty: "No profile entries yet.",
 				profileEditBtn: "Edit profile",
@@ -722,6 +724,7 @@ window.__ModuleLoader__.load({
 			const [phase, setPhase] = (0, react.useState)("idle");
 			const [modal, setModal] = (0, react.useState)();
 			const [summaryBusy, setSummaryBusy] = (0, react.useState)(false);
+			const [summaryError, setSummaryError] = (0, react.useState)();
 			const [modelManual, setModelManual] = (0, react.useState)(() => Boolean(state.section.extractionModel?.provider || state.section.extractionModel?.model));
 			/** The committed injection budget (the Host clamps it on the way in). */
 			const tokens = state.section.injectedSummaryTokens;
@@ -732,7 +735,8 @@ window.__ModuleLoader__.load({
 				setModal("summary");
 				if (state.data.summary === void 0) {
 					setSummaryBusy(true);
-					props.fetchSummary().finally(() => setSummaryBusy(false));
+					setSummaryError(void 0);
+					props.fetchSummary().then(() => setSummaryError(void 0)).catch((err) => setSummaryError(err?.message ?? String(err))).finally(() => setSummaryBusy(false));
 				}
 			};
 			const loadedRef = (0, react.useRef)(false);
@@ -1024,8 +1028,12 @@ window.__ModuleLoader__.load({
 											const a = document.createElement("a");
 											a.href = url;
 											a.download = "atom-memory-backup.json";
+											document.body.appendChild(a);
 											a.click();
-											URL.revokeObjectURL(url);
+											setTimeout(() => {
+												document.body.removeChild(a);
+												URL.revokeObjectURL(url);
+											}, 0);
 											setStatus("✔ " + (/* @__PURE__ */ new Date()).toLocaleString());
 											setPhase("idle");
 										}).catch((err) => {
@@ -1069,6 +1077,7 @@ window.__ModuleLoader__.load({
 						t,
 						busy: summaryBusy,
 						content: state.data.summary,
+						error: summaryError,
 						onClose: () => setModal(void 0)
 					}) : null,
 					modal === "facts" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FactsEditorModal, {
@@ -1121,7 +1130,7 @@ window.__ModuleLoader__.load({
 		}
 		/** The summary viewer modal (read-only, renders the injected markdown). */
 		function SummaryModal(props) {
-			const { t, busy, content, onClose } = props;
+			const { t, busy, content, error, onClose } = props;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Modal, {
 				t,
 				title: t("summaryHeader"),
@@ -1129,6 +1138,9 @@ window.__ModuleLoader__.load({
 				children: busy && content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 					className: css.hint,
 					children: t("summaryLoading")
+				}) : error !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+					className: css.empty,
+					children: t("summaryLoadError", { message: error })
 				}) : content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 					className: css.empty,
 					children: t("summaryEmpty")
@@ -1156,15 +1168,6 @@ window.__ModuleLoader__.load({
 				...r,
 				...patch
 			} : r));
-			const addRow = () => setRows((prev) => [...prev, {
-				uid: nextDraftUid(),
-				fact_id: "",
-				subject: "",
-				predicate: "",
-				object: "",
-				content: "",
-				deleted: false
-			}]);
 			const save = () => {
 				setSaving(true);
 				Promise.resolve(onSave(withoutUid(rows))).finally(() => {
@@ -1185,12 +1188,12 @@ window.__ModuleLoader__.load({
 				disabled: saving,
 				children: saving ? t("saving") : t("saveAll")
 			})] });
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(Modal, {
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Modal, {
 				t,
 				title: t("memoryModalTitle"),
 				footer,
 				onClose,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("table", {
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("table", {
 					className: css.editor,
 					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("tr", { children: [
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("th", { children: t("colSubject") }),
@@ -1233,13 +1236,7 @@ window.__ModuleLoader__.load({
 							}) })
 						]
 					}, row.uid)) })]
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-					type: "button",
-					className: css.add,
-					style: { marginTop: 10 },
-					onClick: addRow,
-					children: t("addRow")
-				})]
+				})
 			});
 		}
 		/** Modal editor for the user profile: Excel-like editable table + single save all. */

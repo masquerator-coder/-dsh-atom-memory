@@ -276,9 +276,11 @@ export async function extractViaEndpoint(deps: {
   maxTokens: number
   fetchImpl?: (input: string, init?: Record<string, unknown>) => Promise<{ ok: boolean; body: { getReader(): unknown } }>
   log: (message: string) => void
+  /** Max wall-clock time for the whole request, ms. Aborts on exceed. */
+  timeoutMs?: number
 }): Promise<string> {
   const {
-    baseURL, model, apiKey, system, userText, maxTokens, log,
+    baseURL, model, apiKey, system, userText, maxTokens, log, timeoutMs = 60_000,
   } = deps
   const fetchImpl = deps.fetchImpl ?? (globalThis as { fetch?: unknown }).fetch as
     ((input: string, init?: Record<string, unknown>) => Promise<{ ok: boolean; body: { getReader(): unknown } }>)
@@ -287,27 +289,45 @@ export async function extractViaEndpoint(deps: {
   }
   const url = `${baseURL.replace(/\/+$/u, '')}/chat/completions`
   log(`[atom-memory] extraction via custom endpoint ${baseURL} model=${model}`)
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: userText },
-      ],
-      stream: true,
-      max_tokens: maxTokens,
-    }),
-  } as Record<string, unknown>)
-  if (!response.ok) {
-    throw new Error(`custom endpoint ${baseURL} returned HTTP ${(response as { status?: unknown }).status ?? 'error'}`)
+  // Bound the request: a hung endpoint must not stall the extraction path
+  // (the per-message capture, the pre-compression sweep and the `memory_add`
+  // tool all await it, and the RPC timeout does not cover this direct call).
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const cleanup = (): void => clearTimeout(timer)
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userText },
+        ],
+        stream: true,
+        max_tokens: maxTokens,
+      }),
+      // TS: the injected fetch impl's signature is narrowed; forward the signal
+      // as an unknown field so a real fetch aborts the body read on timeout.
+      signal: controller.signal,
+    } as Record<string, unknown>)
+    if (!response.ok) {
+      throw new Error(`custom endpoint ${baseURL} returned HTTP ${(response as { status?: unknown }).status ?? 'error'}`)
+    }
+    return await collectSseText(response.body as never as { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } })
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`custom endpoint ${baseURL} timed out after ${timeoutMs}ms`)
+    }
+    throw err
+  } finally {
+    cleanup()
   }
-  return collectSseText(response.body as never as { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } })
 }
 
 /**

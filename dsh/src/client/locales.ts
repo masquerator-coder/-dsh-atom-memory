@@ -43,6 +43,7 @@ const zh = {
   summaryOpen: '查看摘要',
   summaryLoading: '正在加载…',
   summaryEmpty: '暂无摘要（没有活跃事实）。',
+  summaryLoadError: '摘要加载失败（{message}）。',
   // 4) profile
   profileHeader: 'User 画像编辑',
   profileEmpty: '暂无画像条目。',
@@ -126,6 +127,7 @@ const en: Record<keyof typeof zh, string> = {
   summaryOpen: 'View summary',
   summaryLoading: 'Loading…',
   summaryEmpty: 'No summary yet (no active facts).',
+  summaryLoadError: 'Failed to load the summary ({message}).',
   profileHeader: 'User profile editing',
   profileEmpty: 'No profile entries yet.',
   profileEditBtn: 'Edit profile',

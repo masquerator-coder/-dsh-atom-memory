@@ -154,7 +154,6 @@ interface RemoteAtomMemory {
   }): Promise<WireResult<unknown>>
   deleteFact(args: { user: string; fact_id: string }): Promise<WireResult<unknown>>
   summary(args: { user: string; maxTokens?: number }): Promise<WireResult<string>>
-  summary(args: { user: string }): Promise<WireResult<string>>
   listProfile(args: { user: string }): Promise<WireResult<{ profile: MemoryData['profile'] }>>
   upsertProfile(args: { user: string; section: string; key: string; value: string; pinned?: boolean }): Promise<WireResult<unknown>>
   deleteProfile(args: { user: string; section: string; key: string }): Promise<WireResult<unknown>>

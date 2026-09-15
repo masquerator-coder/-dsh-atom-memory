@@ -49,6 +49,7 @@ Run directly (debug)::
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import sys
@@ -309,7 +310,15 @@ class RpcServer:
         ``task_done`` / ``task_dead`` line. This is monitoring only — it never
         drives correctness.
         """
-        seen: set = set()
+        # A bounded LRU of candidate ids already emitted. This is monitoring
+        # only: a terminal candidate never changes state, so the set only guards
+        # against re-emitting the same id on every poll. It is sized by the
+        # number of candidates a busy session can realistically produce; once it
+        # overflows, the oldest ids are forgotten and — if still terminal — may
+        # be re-emitted once, which is harmless for best-effort monitoring (and
+        # far better than growing without bound for the life of the process).
+        seen: "collections.OrderedDict[str, None]" = collections.OrderedDict()
+        seen_limit = 4096
         sleep = asyncio.sleep
         while True:
             await sleep(0.5)
@@ -322,8 +331,12 @@ class RpcServer:
             for r in rows:
                 cid = r["candidate_id"]
                 if cid in seen:
+                    # Refresh recency so a still-cold id is not the first evicted.
+                    seen.move_to_end(cid)
                     continue
-                seen.add(cid)
+                seen[cid] = None
+                while len(seen) > seen_limit:
+                    seen.popitem(last=False)
                 self._emit(
                     {
                         "evt": "task_dead" if r["status"] in ("dead", "error") else "task_done",

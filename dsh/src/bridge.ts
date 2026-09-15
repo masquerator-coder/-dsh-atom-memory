@@ -42,12 +42,40 @@ export interface BridgeDeps {
   onEvent?: (event: Record<string, unknown>) => void
   /** Called for each tagged log line from the Python process. */
   onLog?: (message: string) => void
+  /**
+   * Called when a *healthy* process dies at runtime (not during an initial
+   * `start()`), so the owner can restart it. A start failure does not fire this
+   * — the owner already gets the rejected `start()` promise for that.
+   */
+  onExit?: () => void
 }
 
 interface Pending {
   resolve: (value: any) => void
   reject: (err: Error) => void
   timer: NodeJS.Timeout
+}
+
+/**
+ * Environment for the Python child: the host env minus secret-bearing variables.
+ *
+ * The child only genuinely needs `PATH` (to locate the interpreter) plus the
+ * encoding/buffering switches. It does not need the host's API tokens, and
+ * leaking e.g. `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` into every spawned
+ * bridge process widens the blast radius for suspicious values beyond dsh. This
+ * denylist matches the common secret-name shapes case-insensitively; it is a
+ * defensive guard, not a guarantee (a secret stored under a non-matching name
+ * still passes through).
+ */
+const SECRET_ENV = /(^|_)(api[_-]?key|apitoken|access[_-]?token|auth[_-]?token|token|secret|password|passwd|credential|private[_-]?key)(_|$)/i
+
+function childEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined || SECRET_ENV.test(key)) continue
+    env[key] = value
+  }
+  return env
 }
 
 /**
@@ -63,7 +91,11 @@ export function defaultSpawn(
   const child = spawn(bin, ['-m', 'atom_memory.rpc'], {
     stdio: ['pipe', 'pipe', 'pipe'],
     cwd,
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+    env: {
+      ...childEnv(),
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUNBUFFERED: '1',
+    },
   }) as ChildProcessWithoutNullStreams
   return child as unknown as ProcessLike
 }
@@ -76,6 +108,7 @@ export class PythonBridge {
   private readonly spawnProcess: BridgeDeps['spawnProcess']
   private readonly onEvent?: BridgeDeps['onEvent']
   private readonly onLog?: BridgeDeps['onLog']
+  private readonly onExit?: BridgeDeps['onExit']
 
   private proc: ProcessLike | undefined
   private incoming!: Interface
@@ -83,12 +116,15 @@ export class PythonBridge {
   private readonly pending = new Map<string, Pending>()
   private nextId = 1
   private disposed = false
+  /** True once a `start()` RPC has been acked, i.e. the child was healthy. */
+  private ready = false
 
   constructor(deps: BridgeDeps) {
     this.deps = { timeoutMs: deps.timeoutMs ?? 30_000, ...deps }
     this.spawnProcess = deps.spawnProcess
     this.onEvent = deps.onEvent
     this.onLog = deps.onLog
+    this.onExit = deps.onExit
   }
 
   /** Whether a child process is currently alive. */
@@ -135,10 +171,41 @@ export class PythonBridge {
     this.proc.on('exit', (code, signal) => this.handleExit(code, signal))
     try {
       await this.call('start', startParams)
+      this.ready = true
     } catch (err) {
-      await this.dispose()
+      // A start failure must NOT dispose (dispose is irreversible and is only
+      // for the plugin-unload path): it would make the owner's retry loop throw
+      // `bridge is disposed` forever, permanently bricking memory after one
+      // transient failure (e.g. a slow Python import over the RPC timeout).
+      // Instead, tear down the dead child so a fresh `start()` can retry.
+      await this.reset()
       throw err
     }
+  }
+
+  /**
+   * Tear down the child and in-flight requests so a fresh `start()` can respawn,
+   * WITHOUT setting `disposed` (which is reserved for the irreversible plugin
+   * unload in `dispose()`). Used by the start-failure path.
+   */
+  private async reset(): Promise<void> {
+    this.ready = false
+    const proc = this.proc
+    this.proc = undefined
+    if (proc !== undefined) {
+      try {
+        proc.stdin.write(JSON.stringify({ id: 'shutdown', method: 'stop' }) + '\n')
+      } catch {
+        /* the child may already be gone */
+      }
+      try {
+        this.onReadyClose()
+      } catch {
+        /* ignore */
+      }
+      proc.kill()
+    }
+    this.rejectAll(new Error('bridge reset'))
   }
 
   /** Send the Python `start`/config had already been acked lazily. */
@@ -159,6 +226,7 @@ export class PythonBridge {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.ready = false
     const proc = this.proc
     this.proc = undefined
     if (proc !== undefined) {
@@ -258,6 +326,11 @@ export class PythonBridge {
 
   private handleExit(code: number | null, signal: NodeJS.Signals | null): void {
     if (this.disposed) return
+    // Only a process that had successfully started is a "runtime" exit the
+    // owner should restart. A spawn/start failure fires this too while `ready`
+    // is false; the owner already handles that via the rejected `start()`.
+    const wasReady = this.ready
+    this.ready = false
     const proc = this.proc
     this.proc = undefined
     this.onReadyClose()
@@ -265,6 +338,7 @@ export class PythonBridge {
       this.onLog?.(`[atom-memory] python bridge exited (code=${code}, signal=${signal})`)
     }
     this.rejectAll(new Error(`python bridge exited (code=${code}, signal=${signal})`))
+    if (wasReady) this.onExit?.()
   }
 }
 
