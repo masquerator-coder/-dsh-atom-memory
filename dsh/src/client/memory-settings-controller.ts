@@ -50,6 +50,8 @@ export interface MemoryData {
   profile: Array<{ section: string; key: string; value: string; pinned?: boolean }>
   /** The rendered `memory.md` view (injected system-prompt memory), lazy-loaded. */
   memoryMd?: string
+  /** The rendered aggregate memory summary digest, lazy-loaded. */
+  summary?: string
 }
 
 /** What the panel renders. */
@@ -89,6 +91,8 @@ export interface MemorySettingsFace {
   saveFact: (fact: MemoryData['facts'][number]) => Promise<void>
   deleteFact: (factId: string) => Promise<void>
   fetchMemoryMd: () => Promise<string>
+  /** Lazy-load the user's aggregate memory summary digest (see Host `summary`). */
+  fetchSummary: () => Promise<string>
   upsertProfile: (section: string, key: string, value: string, pinned: boolean) => Promise<void>
   deleteProfile: (section: string, key: string) => Promise<void>
   /** Batch-save an Excel-style facts table (edit changed rows, delete marked rows) in one pass. */
@@ -153,6 +157,7 @@ interface RemoteAtomMemory {
   }): Promise<WireResult<unknown>>
   deleteFact(args: { user: string; fact_id: string }): Promise<WireResult<unknown>>
   memoryMd(args: { user: string; maxTokens?: number }): Promise<WireResult<string>>
+  summary(args: { user: string }): Promise<WireResult<string>>
   listProfile(args: { user: string }): Promise<WireResult<{ profile: MemoryData['profile'] }>>
   upsertProfile(args: { user: string; section: string; key: string; value: string; pinned?: boolean }): Promise<WireResult<unknown>>
   deleteProfile(args: { user: string; section: string; key: string }): Promise<WireResult<unknown>>
@@ -212,6 +217,7 @@ export class MemorySettingsController {
       saveFact: (fact) => this.saveFact(fact),
       deleteFact: (factId) => this.deleteFact(factId),
       fetchMemoryMd: () => this.fetchMemoryMd(),
+      fetchSummary: () => this.fetchSummary(),
       upsertProfile: (section, key, value, pinned) => this.upsertProfile(section, key, value, pinned),
       deleteProfile: (section, key) => this.deleteProfile(section, key),
       saveAllFacts: (rows) => this.saveAllFacts(rows),
@@ -300,6 +306,23 @@ export class MemorySettingsController {
       this.store.set({
         ...this.store.getSnapshot(),
         data: { ...this.store.getSnapshot().data, memoryMd: text },
+        lastError: undefined,
+      })
+      return text
+    } catch (err) {
+      this.store.set({
+        ...this.store.getSnapshot(), lastError: (err as Error)?.message ?? String(err),
+      })
+      throw err
+    }
+  }
+
+  private async fetchSummary(): Promise<string> {
+    try {
+      const text = unwrap(await this.r().summary({ user: USER }))
+      this.store.set({
+        ...this.store.getSnapshot(),
+        data: { ...this.store.getSnapshot().data, summary: text },
         lastError: undefined,
       })
       return text

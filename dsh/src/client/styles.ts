@@ -14,6 +14,10 @@ export const memorySettingsStyleText = `
 .atom-memory-status{padding:6px 12px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#46a758) 12%,transparent);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px}
 .atom-memory-block{display:flex;flex-direction:column;gap:8px;margin:0;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#1f2126)}
 .atom-memory-block legend{font-weight:600;padding:0 4px;color:var(--dsw-alias-label-primary,#e6e8eb)}
+/* A grouped region around several related blocks (e.g. the 记忆内容 region), so
+   summary + profile + memory & facts read as one area rather than loose panels. */
+.atom-memory-group{display:flex;flex-direction:column;gap:10px;margin:0;padding:14px 14px 16px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:12px;background:transparent}
+.atom-memory-group-title{font-size:13px;font-weight:700;padding:0 6px;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-inputs{display:flex;gap:8px;margin-top:4px}
 .atom-memory-field{display:flex;flex-direction:column;gap:3px;margin-top:8px}

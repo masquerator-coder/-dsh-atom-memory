@@ -82,6 +82,7 @@ function buildController(
     editFact: async () => ({ ok: true, value: {} }),
     deleteFact: async () => ({ ok: true, value: {} }),
     memoryMd: async () => ({ ok: true, value: '# memory.md\ntest' }),
+    summary: async () => ({ ok: true, value: '# 摘要 (Summary) — global\n属性: 工程师' }),
     listProfile: async () => ({
       ok: true,
       value: {
@@ -190,6 +191,10 @@ describe('MemorySettingsSection client render', () => {
     expect(screen.getByText('查看 memory.md')).toBeTruthy()
     expect(screen.getByText('编辑记忆')).toBeTruthy()
     expect(screen.getByText('编辑画像')).toBeTruthy()
+    expect(screen.getByText('查看摘要')).toBeTruthy()
+    // The three memory-content blocks (summary / profile / memory & facts) are
+    // grouped under one 记忆内容 region.
+    expect(screen.getByText('记忆内容')).toBeTruthy()
     expect(refreshData).toHaveBeenCalled()
     expect(screen.queryByText(LOCALE_NS + ':title')).toBeNull()
   })
@@ -207,6 +212,27 @@ describe('MemorySettingsSection client render', () => {
     })
     await act(async () => {})
     expect(screen.getByText(/# memory\.md/)).toBeTruthy()
+  })
+
+  it('opens the memory summary in a read-only modal', async () => {
+    const controller = buildController()
+    const { props } = bind(controller)
+    await act(async () => {
+      render(createElement(MemorySettingsSection, props))
+    })
+    // The summary button lives inside the 记忆内容 group, sharing it with the
+    // profile (User 画像编辑) and memory & facts editors.
+    const group = screen.getByText('记忆内容').closest('fieldset')!
+    expect(within(group).getByText('查看摘要')).toBeTruthy()
+    expect(within(group).getByText('编辑画像')).toBeTruthy()
+    expect(within(group).getByText('编辑记忆')).toBeTruthy()
+    // Not open initially.
+    expect(screen.queryByText(/# 摘要/)).toBeNull()
+    await act(async () => {
+      fireEvent.click(screen.getByText('查看摘要'))
+    })
+    await act(async () => {})
+    expect(screen.getByText(/# 摘要 \(Summary\) — global/)).toBeTruthy()
   })
 
   it('opens the facts editor as an Excel-like table with the saved data', async () => {

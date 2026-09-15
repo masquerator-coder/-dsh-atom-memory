@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added (第十三轮：设置面板新增「记忆摘要」查看 + 记忆内容归组)
+
+- **设置面板新增「记忆摘要」只读查看**：新增「查看摘要」按钮与只读弹窗，走既有
+  Python `AtomMem.summary`（聚合摘要：属性/偏好/工作流/事件/轻知识，含覆盖 `fact_id`
+  与未展开长文知识提示），与 `memory_summary` 工具同源，是「先看摘要、再查明细」的
+  面板入口。接线：host `@Remote summary`（`src/controller.ts`）→ 浏览器描述符
+  `summary`（`src/client/remote.ts`）→ face 方法 `fetchSummary()`（结果存入
+  `state.data.summary`）→ `MemorySettingsSection.tsx` 弹窗。
+- **「记忆内容」归组**：**记忆摘要 / user 画像编辑 / 记忆与编辑 · 原子事实** 三块归入
+  同一「记忆内容」区域（外层 fieldset + `atom-memory-group` 样式），突出三者同属
+  「内存内容的查看与编辑」，与记忆开关、注入体积、抽取模型、备份恢复区分开。
+- 配套：`contentGroupHeader`/`summary*` 中英文案、`atom-memory-group*` 样式；
+  测试 `controller.test.ts`（summary 接线）、`remote-contribution.test.ts`（方法集）、
+  `memory-settings-controller.test.ts`（fetchSummary）、`section-render.client.test.ts`
+  （「记忆内容」归组 + 摘要弹窗）。
+
 ### Fixed (第十二轮：强化/衰减算法审计 —— 状态与强度分离，消除补丁式叠加)
 
 - **核心缺陷：存进去的是"衰减态"，读出来却被当成"当前态"用。** `facts.reinforce_count`

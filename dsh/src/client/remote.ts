@@ -63,6 +63,7 @@ export const ATOM_MEMORY_REMOTE: TypertRemoteContribution = {
     jsonArgsMethod('editFact', true),
     jsonArgsMethod('deleteFact', true),
     jsonArgsMethod('memoryMd', true),
+    jsonArgsMethod('summary', true),
     jsonArgsMethod('listProfile', true),
     jsonArgsMethod('upsertProfile', true),
     jsonArgsMethod('deleteProfile', true),

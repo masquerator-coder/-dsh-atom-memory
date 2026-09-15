@@ -135,6 +135,7 @@ window.__ModuleLoader__.load({
 					saveFact: (fact) => this.saveFact(fact),
 					deleteFact: (factId) => this.deleteFact(factId),
 					fetchMemoryMd: () => this.fetchMemoryMd(),
+					fetchSummary: () => this.fetchSummary(),
 					upsertProfile: (section, key, value, pinned) => this.upsertProfile(section, key, value, pinned),
 					deleteProfile: (section, key) => this.deleteProfile(section, key),
 					saveAllFacts: (rows) => this.saveAllFacts(rows),
@@ -224,6 +225,26 @@ window.__ModuleLoader__.load({
 						data: {
 							...this.store.getSnapshot().data,
 							memoryMd: text
+						},
+						lastError: void 0
+					});
+					return text;
+				} catch (err) {
+					this.store.set({
+						...this.store.getSnapshot(),
+						lastError: err?.message ?? String(err)
+					});
+					throw err;
+				}
+			}
+			async fetchSummary() {
+				try {
+					const text = unwrap(await this.r().summary({ user: USER }));
+					this.store.set({
+						...this.store.getSnapshot(),
+						data: {
+							...this.store.getSnapshot().data,
+							summary: text
 						},
 						lastError: void 0
 					});
@@ -372,6 +393,12 @@ window.__ModuleLoader__.load({
 				modelApiKeyLabel: "API 密钥",
 				modelApiKeyPlaceholder: "sk-...",
 				modelHint: "选择“手动指定模型”后可填 Provider ID 与 Model（跟随默认时留空）；填了 API 地址则由插件直连该 OpenAI 兼容端点，否则走 dsh 默认模型。",
+				contentGroupHeader: "记忆内容",
+				summaryHeader: "记忆摘要",
+				summaryDesc: "只读展示记忆的聚合摘要——把稳定属性、偏好、工作流、近期事件与轻知识压缩成一份可快速通读的紧凑摘要（有损），需要精确定位某条事实时再用 memory_recall 检索。",
+				summaryOpen: "查看摘要",
+				summaryLoading: "正在加载…",
+				summaryEmpty: "暂无摘要（没有活跃事实）。",
 				profileHeader: "User 画像编辑",
 				profileEmpty: "暂无画像条目。",
 				profileEditBtn: "编辑画像",
@@ -450,6 +477,12 @@ window.__ModuleLoader__.load({
 				modelApiKeyLabel: "API key",
 				modelApiKeyPlaceholder: "sk-...",
 				modelHint: "With “manual model” you can set Provider ID and Model (leave empty to follow default); filling in the API Base URL makes the plugin call that OpenAI-compatible endpoint directly, otherwise the dsh default model is used.",
+				contentGroupHeader: "Memory content",
+				summaryHeader: "Memory summary",
+				summaryDesc: "Read-only render of the aggregate memory summary — a compact, lossy digest of stable attributes, preferences, workflows, recent events and light knowledge, meant to be skimmed first; use memory_recall to drill into any specific fact.",
+				summaryOpen: "View summary",
+				summaryLoading: "Loading…",
+				summaryEmpty: "No summary yet (no active facts).",
 				profileHeader: "User profile editing",
 				profileEmpty: "No profile entries yet.",
 				profileEditBtn: "Edit profile",
@@ -516,6 +549,10 @@ window.__ModuleLoader__.load({
 .atom-memory-status{padding:6px 12px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#46a758) 12%,transparent);color:var(--dsw-alias-label-primary,#e6e8eb);font-size:13px}
 .atom-memory-block{display:flex;flex-direction:column;gap:8px;margin:0;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#1f2126)}
 .atom-memory-block legend{font-weight:600;padding:0 4px;color:var(--dsw-alias-label-primary,#e6e8eb)}
+/* A grouped region around several related blocks (e.g. the 记忆内容 region), so
+   summary + profile + memory & facts read as one area rather than loose panels. */
+.atom-memory-group{display:flex;flex-direction:column;gap:10px;margin:0;padding:14px 14px 16px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,0.12));border-radius:12px;background:transparent}
+.atom-memory-group-title{font-size:13px;font-weight:700;padding:0 6px;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-switch-row,.atom-memory-radio-row{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer;color:var(--dsw-alias-label-primary,#e6e8eb)}
 .atom-memory-inputs{display:flex;gap:8px;margin-top:4px}
 .atom-memory-field{display:flex;flex-direction:column;gap:3px;margin-top:8px}
@@ -595,6 +632,8 @@ window.__ModuleLoader__.load({
 			error: "atom-memory-error",
 			status: "atom-memory-status",
 			block: "atom-memory-block",
+			group: "atom-memory-group",
+			groupTitle: "atom-memory-group-title",
 			switchRow: "atom-memory-switch-row",
 			radioRow: "atom-memory-radio-row",
 			inputs: "atom-memory-inputs",
@@ -693,6 +732,7 @@ window.__ModuleLoader__.load({
 			const [phase, setPhase] = (0, react.useState)("idle");
 			const [modal, setModal] = (0, react.useState)();
 			const [memoryMdBusy, setMemoryMdBusy] = (0, react.useState)(false);
+			const [summaryBusy, setSummaryBusy] = (0, react.useState)(false);
 			const [modelManual, setModelManual] = (0, react.useState)(() => Boolean(state.section.extractionModel?.provider || state.section.extractionModel?.model));
 			/** The committed injection budget (the Host clamps it on the way in). */
 			const tokens = state.section.injectedMemoryMdTokens;
@@ -704,6 +744,13 @@ window.__ModuleLoader__.load({
 				if (state.data.memoryMd === void 0) {
 					setMemoryMdBusy(true);
 					props.fetchMemoryMd().finally(() => setMemoryMdBusy(false));
+				}
+			};
+			const openSummary = () => {
+				setModal("summary");
+				if (state.data.summary === void 0) {
+					setSummaryBusy(true);
+					props.fetchSummary().finally(() => setSummaryBusy(false));
 				}
 			};
 			const loadedRef = (0, react.useRef)(false);
@@ -934,42 +981,71 @@ window.__ModuleLoader__.load({
 						]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
-						className: css.block,
+						className: css.group,
 						disabled: busy,
 						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("profileHeader") }),
-							profile.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-								className: css.empty,
-								children: t("profileEmpty")
-							}) : null,
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								className: css.btn,
-								style: { alignSelf: "flex-start" },
-								onClick: () => setModal("profile"),
-								children: t("profileEditBtn")
-							})
-						]
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
-						className: css.block,
-						disabled: busy,
-						children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("legend", { children: [
-								t("memoryHeader"),
-								" · ",
-								t("factsHeader")
-							] }),
-							facts.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-								className: css.empty,
-								children: t("factsEmpty")
-							}) : null,
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								className: css.btn,
-								style: { alignSelf: "flex-start" },
-								onClick: () => setModal("facts"),
-								children: t("memoryEditBtn")
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", {
+								className: css.groupTitle,
+								children: t("contentGroupHeader")
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
+								className: css.block,
+								disabled: busy || summaryBusy,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("summaryHeader") }),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: css.btn,
+										style: { alignSelf: "flex-start" },
+										disabled: busy || summaryBusy,
+										onClick: openSummary,
+										children: t("summaryOpen")
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+										className: css.hint,
+										children: t("summaryDesc")
+									})
+								]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
+								className: css.block,
+								disabled: busy,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", { children: t("profileHeader") }),
+									profile.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+										className: css.empty,
+										children: t("profileEmpty")
+									}) : null,
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: css.btn,
+										style: { alignSelf: "flex-start" },
+										onClick: () => setModal("profile"),
+										children: t("profileEditBtn")
+									})
+								]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
+								className: css.block,
+								disabled: busy,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("legend", { children: [
+										t("memoryHeader"),
+										" · ",
+										t("factsHeader")
+									] }),
+									facts.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+										className: css.empty,
+										children: t("factsEmpty")
+									}) : null,
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: css.btn,
+										style: { alignSelf: "flex-start" },
+										onClick: () => setModal("facts"),
+										children: t("memoryEditBtn")
+									})
+								]
 							})
 						]
 					}),
@@ -1042,6 +1118,12 @@ window.__ModuleLoader__.load({
 						content: state.data.memoryMd,
 						onClose: () => setModal(void 0)
 					}) : null,
+					modal === "summary" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(SummaryModal, {
+						t,
+						busy: summaryBusy,
+						content: state.data.summary,
+						onClose: () => setModal(void 0)
+					}) : null,
 					modal === "facts" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FactsEditorModal, {
 						t,
 						initial: facts,
@@ -1103,6 +1185,25 @@ window.__ModuleLoader__.load({
 				}) : content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 					className: css.empty,
 					children: t("memoryMdEmpty")
+				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("pre", {
+					className: css.memoryMdView,
+					children: content
+				})
+			});
+		}
+		/** The memory summary viewer modal (read-only). */
+		function SummaryModal(props) {
+			const { t, busy, content, onClose } = props;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Modal, {
+				t,
+				title: t("summaryHeader"),
+				onClose,
+				children: busy && content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+					className: css.hint,
+					children: t("summaryLoading")
+				}) : content === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+					className: css.empty,
+					children: t("summaryEmpty")
 				}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("pre", {
 					className: css.memoryMdView,
 					children: content
@@ -1358,6 +1459,7 @@ window.__ModuleLoader__.load({
 				jsonArgsMethod("editFact", true),
 				jsonArgsMethod("deleteFact", true),
 				jsonArgsMethod("memoryMd", true),
+				jsonArgsMethod("summary", true),
 				jsonArgsMethod("listProfile", true),
 				jsonArgsMethod("upsertProfile", true),
 				jsonArgsMethod("deleteProfile", true),

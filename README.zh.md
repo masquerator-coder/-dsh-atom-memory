@@ -63,7 +63,7 @@ pip install -e .
 | 模型可见工具 | `memory_add`、`memory_summary`、`memory_recall`、`memory_forget`、`memory_memory_md`、`memory_user_md`、`memory_stats` |
 | 系统提示词 | 一段常驻的持久记忆意识段，外加一份在会话起始冻结一次的紧凑 `memory.md` 摘要 |
 | 会话捕获 | 尽力而为的逐消息捕获、压缩前抢救与周期性微调，只读取持久会话事件 |
-| 设置面板 | dsh 设置侧边栏中的 **记忆 / Memory** 分区：总开关、注入体积滑块、抽取模型、可逐行 **固定** 的用户画像编辑、事实浏览与编辑、备份与恢复 |
+| 设置面板 | dsh 设置侧边栏中的 **记忆 / Memory** 分区：总开关、注入体积滑块、抽取模型、一个把摘要查看、可逐行 **固定** 的用户画像编辑与事实浏览/编辑归在一起的 **记忆内容** 区域，以及备份与恢复 |
 | 存储 | 位于 `dbPath` 的单个 SQLite 文件（默认 `~/.dsh/atom-memory/memory.db`） |
 
 设置分区写入 `atom-memory` 设置命名空间，因此它拥有的六个字段实时生效、无需重启；其余字段都是部署期配置。

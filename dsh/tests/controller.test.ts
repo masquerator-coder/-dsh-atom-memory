@@ -75,6 +75,35 @@ describe('AtomMemoryController.memoryMd', () => {
   })
 })
 
+describe('AtomMemoryController.summary', () => {
+  it('forwards the user scope to the Python summary method and returns its text', async () => {
+    const { controller, call } = makeController({ result: '# 摘要 (Summary) — global\n属性: 工程师' })
+    const text = await controller.summary({ user: 'global' })
+
+    expect(text).toBe('# 摘要 (Summary) — global\n属性: 工程师')
+    expect(call).toHaveBeenCalledTimes(1)
+    const [method, params] = call.mock.calls[0]!
+    expect(method).toBe('summary')
+    expect(params).toMatchObject({ user_id: 'global' })
+  })
+
+  it('unwraps a wrapped payload and tolerates an empty one', async () => {
+    const wrapped = makeController({ result: { text: '# wrapped summary' } })
+    await expect(wrapped.controller.summary({ user: 'global' })).resolves.toBe('# wrapped summary')
+
+    const empty = makeController({ result: {} })
+    await expect(empty.controller.summary({ user: 'global' })).resolves.toBe('')
+  })
+
+  it('refuses to render while the bridge is down or the master switch is off', async () => {
+    const down = makeController({ alive: false })
+    await expect(down.controller.summary({ user: 'global' })).rejects.toThrow('bridge is not running')
+
+    const off = makeController({ enabled: false })
+    await expect(off.controller.summary({ user: 'global' })).rejects.toThrow('memory is disabled')
+  })
+})
+
 describe('AtomMemoryController fact paging', () => {
   it('applies the default page window and forwards the user scope', async () => {
     const { controller, call } = makeController({ result: { facts: [], total: 0 } })

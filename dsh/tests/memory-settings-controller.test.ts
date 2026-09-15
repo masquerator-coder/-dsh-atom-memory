@@ -58,8 +58,9 @@ function fakeRemote() {
   const listProfile = vi.fn(async () => ({ ok: true, value: { profile: [] } }))
   const deleteFact = vi.fn(async () => ({ ok: true, value: {} }))
   const memoryMd = vi.fn(async () => ({ ok: true, value: '# memory.md\ntest' }))
-  const remote: Record<string, unknown> = { listFacts, editFact: vi.fn(async () => ({ ok: true, value: {} })), deleteFact, memoryMd, listProfile, upsertProfile: vi.fn(async () => ({ ok: true, value: {} })), deleteProfile: vi.fn(async () => ({ ok: true, value: {} })), backup, restore }
-  return { remote, backup, restore, listFacts, listProfile, deleteFact, memoryMd }
+  const summary = vi.fn(async () => ({ ok: true, value: '# 摘要 (Summary) — global\n属性: 工程师' }))
+  const remote: Record<string, unknown> = { listFacts, editFact: vi.fn(async () => ({ ok: true, value: {} })), deleteFact, memoryMd, summary, listProfile, upsertProfile: vi.fn(async () => ({ ok: true, value: {} })), deleteProfile: vi.fn(async () => ({ ok: true, value: {} })), backup, restore }
+  return { remote, backup, restore, listFacts, listProfile, deleteFact, memoryMd, summary }
 }
 
 describe('MemorySettingsController', () => {
@@ -205,6 +206,17 @@ describe('MemorySettingsController', () => {
     expect(memoryMd).toHaveBeenCalledWith({ user: 'global' })
     expect(text).toBe('# memory.md\ntest')
     expect(face.hooks.memorySettings.getSnapshot().data.memoryMd).toBe('# memory.md\ntest')
+  })
+
+  it('fetches and stores the rendered aggregate summary', async () => {
+    const { scope } = fakeScope(snapshot({}))
+    const { remote, summary } = fakeRemote()
+    const controller = new MemorySettingsController(scope as unknown as SettingsScope<MemorySettingsSection>, remote)
+    const face = controller.inject()
+    const text = await face.fetchSummary()
+    expect(summary).toHaveBeenCalledWith({ user: 'global' })
+    expect(text).toBe('# 摘要 (Summary) — global\n属性: 工程师')
+    expect(face.hooks.memorySettings.getSnapshot().data.summary).toBe('# 摘要 (Summary) — global\n属性: 工程师')
   })
 
   it('batch-saves a facts table: edits non-deleted rows, deletes marked rows, one refresh', async () => {

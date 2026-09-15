@@ -124,6 +124,27 @@ export class AtomMemoryController extends TypertRemoteService {
     return typeof result === 'string' ? result : (result?.text ?? '')
   }
 
+  /**
+   * Render the user's aggregate memory summary (a compact, lossy digest of the
+   * active facts — stable attributes, preferences, workflows, recent events and
+   * light knowledge — capped by the summary's token budget).
+   *
+   * Complements the `memoryMd` view: `memory.md` is the per-type grouped digest
+   * frozen into the session system prompt, while `summary` is the cheaper
+   * "look first, then drill in" aggregate with the covered fact_ids and an
+   * explicit note about long-form knowledge bodies left out of the digest.
+   */
+  @Remote
+  async summary(args: { user: string }): Promise<string> {
+    this.assertReady()
+    const result = await this.bridge.call<{ text?: string } | string>('summary', {
+      user_id: args.user,
+    })
+    // `AtomMem.summary` returns the markdown string directly; tolerate a
+    // wrapped shape in case the Python side ever changes the contract.
+    return typeof result === 'string' ? result : (result?.text ?? '')
+  }
+
   /** List the user's profile rows. */
   @Remote
   async listProfile(args: { user: string }): Promise<Record<string, unknown>> {

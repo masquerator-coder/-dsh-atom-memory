@@ -55,15 +55,16 @@ pnpm build       # -> lib/index.mjs
 注册为 `atom-memory` 设置命名空间，因此**在设置界面改即实时生效、无需重启**；
 其余字段仍走部署期 `schemastery` 配置。
 
-面板六大功能：
+面板六大功能（其中 **记忆摘要 / user 画像编辑 / 记忆与编辑** 三块归入同一「记忆内容」区域）：
 
 | 功能 | 说明 | 走线 |
 | --- | --- | --- |
 | 记忆开关 | `enabled` 主开关，实时热切换 | `settings<atom-memory>.enabled` → host `Runtime` |
 | 系统提示词注入体积（memory.md） | 注入快照的大小，**滑块 + 固定挡位**（精简 300 / 标准 800 / 详尽 1500 / 充裕 3000 / 宽阔 6000 / 超大 12000 tokens）。预算是**上限而非目标**：记忆没到上限就一条都不丢，所以放大挡位只在记忆确实很多时才多花钱；挡位是离散的，因此不会因少打一个 0 就把每个请求的开销放大十倍。落在挡位之间的旧值（旧「自定义」输入或插件配置）会把滑块停在最接近的挡位并**明示自己不在挡位梯上**，拨动后才切到固定挡位 | `settings<atom-memory>.injectedMemoryMdTokens` → `context.ts` 冻结时求值 |
 | LLM 抽取模型 | 跟随 dsh 默认 / 手动 provider+model | `settings<atom-memory>.extractionModel` → `llm-extractor` |
+| 记忆摘要（查看） | **只读**弹窗展示 `AtomMem.summary` 的聚合摘要（属性/偏好/工作流/事件/轻知识），「先看摘要、再查明细」入口——与 `memory_summary` 工具同源，含覆盖的 `fact_id` 与未展开长文知识提示 | `remote.atomMemory.summary` |
 | user 画像编辑 | 画像行增删改（`user_explicit` 最高优先级）；每行可勾「**固定**」 | `remote.atomMemory.listProfile/upsertProfile/deleteProfile` |
-| 记忆与编辑 | 原子事实列表查看/编辑（SPO/content/type），摘要查看；「查看 memory.md」弹窗渲染**与注入系统提示词完全相同**的紧凑视图（按类型分组、不含 `fact_id`） | `remote.atomMemory.listFacts/editFact/memoryMd` |
+| 记忆与编辑 · 原子事实 | 原子事实列表查看/编辑（SPO/content/type）；「查看 memory.md」弹窗渲染**与注入系统提示词完全相同**的紧凑视图（按类型分组、不含 `fact_id`） | `remote.atomMemory.listFacts/editFact/memoryMd` |
 | 记忆备份与恢复 | 导出 JSON / 上传导入（replace 语义） | `remote.atomMemory.backup/restore` |
 
 > **「固定」画像行（pinned）**：画像是对活跃事实的**派生视图**，因此一条更新的矛盾事实

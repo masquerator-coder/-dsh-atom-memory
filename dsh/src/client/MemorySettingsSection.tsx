@@ -16,6 +16,8 @@ const css = {
   error: 'atom-memory-error',
   status: 'atom-memory-status',
   block: 'atom-memory-block',
+  group: 'atom-memory-group',
+  groupTitle: 'atom-memory-group-title',
   switchRow: 'atom-memory-switch-row',
   radioRow: 'atom-memory-radio-row',
   inputs: 'atom-memory-inputs',
@@ -185,10 +187,12 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
   const [status, setStatus] = useState<string>()
   const [phase, setPhase] = useState<'idle' | 'busy'>('idle')
 
-  // Which modal is open: 'memoryMd' | 'facts' | 'profile' | undefined.
-  const [modal, setModal] = useState<'memoryMd' | 'facts' | 'profile'>()
+  // Which modal is open: 'memoryMd' | 'summary' | 'facts' | 'profile' | undefined.
+  const [modal, setModal] = useState<'memoryMd' | 'summary' | 'facts' | 'profile'>()
   // memory.md fetched content is held in state.data.memoryMd by the controller.
   const [memoryMdBusy, setMemoryMdBusy] = useState(false)
+  // summary fetched content is held in state.data.summary by the controller.
+  const [summaryBusy, setSummaryBusy] = useState(false)
 
   // "手动指定模型" selection: the settings document only stores
   // `extractionModel {provider, model}`, so tracking the user's mode choice
@@ -215,6 +219,14 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
     if (state.data.memoryMd === undefined) {
       setMemoryMdBusy(true)
       void props.fetchMemoryMd().finally(() => setMemoryMdBusy(false))
+    }
+  }
+
+  const openSummary = (): void => {
+    setModal('summary')
+    if (state.data.summary === undefined) {
+      setSummaryBusy(true)
+      void props.fetchSummary().finally(() => setSummaryBusy(false))
     }
   }
 
@@ -404,22 +416,42 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
         <p className={css.hint}>{t('modelHint')}</p>
       </fieldset>
 
-      {/* 4) user profile — open an Excel-style modal editor */}
-      <fieldset className={css.block} disabled={busy}>
-        <legend>{t('profileHeader')}</legend>
-        {profile.length === 0 ? <p className={css.empty}>{t('profileEmpty')}</p> : null}
-        <button type="button" className={css.btn} style={{ alignSelf: 'flex-start' }} onClick={() => setModal('profile')}>
-          {t('profileEditBtn')}
-        </button>
-      </fieldset>
+      {/* 4) 记忆内容 group: summary view + user profile + memory & facts share one region */}
+      <fieldset className={css.group} disabled={busy}>
+        <legend className={css.groupTitle}>{t('contentGroupHeader')}</legend>
 
-      {/* 5) memory & edit — open an Excel-style modal editor */}
-      <fieldset className={css.block} disabled={busy}>
-        <legend>{t('memoryHeader')} · {t('factsHeader')}</legend>
-        {facts.length === 0 ? <p className={css.empty}>{t('factsEmpty')}</p> : null}
-        <button type="button" className={css.btn} style={{ alignSelf: 'flex-start' }} onClick={() => setModal('facts')}>
-          {t('memoryEditBtn')}
-        </button>
+        {/* 4a) memory summary — read-only aggregate digest in a modal */}
+        <fieldset className={css.block} disabled={busy || summaryBusy}>
+          <legend>{t('summaryHeader')}</legend>
+          <button
+            type="button"
+            className={css.btn}
+            style={{ alignSelf: 'flex-start' }}
+            disabled={busy || summaryBusy}
+            onClick={openSummary}
+          >
+            {t('summaryOpen')}
+          </button>
+          <p className={css.hint}>{t('summaryDesc')}</p>
+        </fieldset>
+
+        {/* 4b) user profile — open an Excel-style modal editor */}
+        <fieldset className={css.block} disabled={busy}>
+          <legend>{t('profileHeader')}</legend>
+          {profile.length === 0 ? <p className={css.empty}>{t('profileEmpty')}</p> : null}
+          <button type="button" className={css.btn} style={{ alignSelf: 'flex-start' }} onClick={() => setModal('profile')}>
+            {t('profileEditBtn')}
+          </button>
+        </fieldset>
+
+        {/* 4c) memory & edit — open an Excel-style modal editor */}
+        <fieldset className={css.block} disabled={busy}>
+          <legend>{t('memoryHeader')} · {t('factsHeader')}</legend>
+          {facts.length === 0 ? <p className={css.empty}>{t('factsEmpty')}</p> : null}
+          <button type="button" className={css.btn} style={{ alignSelf: 'flex-start' }} onClick={() => setModal('facts')}>
+            {t('memoryEditBtn')}
+          </button>
+        </fieldset>
       </fieldset>
 
       {/* 6) backup / restore */}
@@ -473,6 +505,14 @@ export function MemorySettingsSection(props: MemorySettingsSectionProps) {
           t={t}
           busy={memoryMdBusy}
           content={state.data.memoryMd}
+          onClose={() => setModal(undefined)}
+        />
+      ) : null}
+      {modal === 'summary' ? (
+        <SummaryModal
+          t={t}
+          busy={summaryBusy}
+          content={state.data.summary}
           onClose={() => setModal(undefined)}
         />
       ) : null}
@@ -542,6 +582,25 @@ function MemoryMdModal(props: {
         ? <p className={css.hint}>{t('memoryMdLoading')}</p>
         : content === undefined
           ? <p className={css.empty}>{t('memoryMdEmpty')}</p>
+          : <pre className={css.memoryMdView}>{content}</pre>}
+    </Modal>
+  )
+}
+
+/** The memory summary viewer modal (read-only). */
+function SummaryModal(props: {
+  t: RowTranslate
+  busy: boolean
+  content?: string
+  onClose: () => void
+}) {
+  const { t, busy, content, onClose } = props
+  return (
+    <Modal t={t} title={t('summaryHeader')} onClose={onClose}>
+      {busy && content === undefined
+        ? <p className={css.hint}>{t('summaryLoading')}</p>
+        : content === undefined
+          ? <p className={css.empty}>{t('summaryEmpty')}</p>
           : <pre className={css.memoryMdView}>{content}</pre>}
     </Modal>
   )

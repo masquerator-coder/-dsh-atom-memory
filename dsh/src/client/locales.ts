@@ -35,7 +35,15 @@ const zh = {
   modelApiKeyLabel: 'API 密钥',
   modelApiKeyPlaceholder: 'sk-...',
   modelHint: '选择“手动指定模型”后可填 Provider ID 与 Model（跟随默认时留空）；填了 API 地址则由插件直连该 OpenAI 兼容端点，否则走 dsh 默认模型。',
-  // 3) profile
+  // 3) 记忆内容 group: summary + profile + memory & facts share one region
+  contentGroupHeader: '记忆内容',
+  // 3a) summary
+  summaryHeader: '记忆摘要',
+  summaryDesc: '只读展示记忆的聚合摘要——把稳定属性、偏好、工作流、近期事件与轻知识压缩成一份可快速通读的紧凑摘要（有损），需要精确定位某条事实时再用 memory_recall 检索。',
+  summaryOpen: '查看摘要',
+  summaryLoading: '正在加载…',
+  summaryEmpty: '暂无摘要（没有活跃事实）。',
+  // 4) profile
   profileHeader: 'User 画像编辑',
   profileEmpty: '暂无画像条目。',
   profileEditBtn: '编辑画像',
@@ -49,7 +57,7 @@ const zh = {
   profileColValue: 'Value',
   profileColPinned: '固定',
   profilePinnedHint: '勾选“固定”的画像条目不会被记忆自动更新或替代——只有你在这里手动改动它才会变。',
-  // 4) memory & edit
+  // 5) memory & edit
   memoryHeader: '记忆与编辑',
   factsHeader: '原子事实',
   factsEmpty: '暂无原子事实。',
@@ -118,6 +126,12 @@ const en: Record<keyof typeof zh, string> = {
   modelApiKeyLabel: 'API key',
   modelApiKeyPlaceholder: 'sk-...',
   modelHint: 'With “manual model” you can set Provider ID and Model (leave empty to follow default); filling in the API Base URL makes the plugin call that OpenAI-compatible endpoint directly, otherwise the dsh default model is used.',
+  contentGroupHeader: 'Memory content',
+  summaryHeader: 'Memory summary',
+  summaryDesc: 'Read-only render of the aggregate memory summary — a compact, lossy digest of stable attributes, preferences, workflows, recent events and light knowledge, meant to be skimmed first; use memory_recall to drill into any specific fact.',
+  summaryOpen: 'View summary',
+  summaryLoading: 'Loading…',
+  summaryEmpty: 'No summary yet (no active facts).',
   profileHeader: 'User profile editing',
   profileEmpty: 'No profile entries yet.',
   profileEditBtn: 'Edit profile',

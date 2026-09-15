@@ -63,7 +63,7 @@ Leave `pythonBin` empty to use `python` on `PATH`, or point it at a virtualenv i
 | Model-facing tools | `memory_add`, `memory_summary`, `memory_recall`, `memory_forget`, `memory_memory_md`, `memory_user_md`, `memory_stats` |
 | System prompt | A persistent-memory awareness section (always registered) plus a compact `memory.md` digest frozen once at session start |
 | Session capture | Best-effort per-message capture, pre-compression rescue, and a periodic nudge, reading only durable session events |
-| Settings panel | A **记忆 / Memory** section in the dsh settings sidebar: master switch, injection-budget slider, extraction model, user-profile editing with a per-row **固定** pin, fact browsing/editing, backup and restore |
+| Settings panel | A **记忆 / Memory** section in the dsh settings sidebar: master switch, injection-budget slider, extraction model, a **记忆内容** region that groups summary viewing, user-profile editing with a per-row **固定** pin, and fact browsing/editing, plus backup and restore |
 | Storage | One SQLite file at `dbPath` (default `~/.dsh/atom-memory/memory.db`) |
 
 The settings section writes to the `atom-memory` settings namespace, so the six fields it owns apply live with no restart; everything else is deploy-time configuration.
