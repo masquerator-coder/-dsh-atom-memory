@@ -165,7 +165,7 @@ The host serves `exports["./client"]` **verbatim** as a browser bundle — it do
 
 #### What the model sees
 
-A static section registered while the plugin is mounted, before and independent of any memory content. It names the four primary tools, states the saving policy, and carries the data-not-instructions guard.
+A section registered while the plugin is mounted, before and independent of any memory content. It names the four primary tools, states the saving policy, and carries the data-not-instructions guard. Its text is resolved at each prompt assembly and is empty — so it drops out of the system prompt — while the memory master switch (`enabled`) is off: a disabled plugin leaves no memory trace.
 
 ##### Verbatim awareness text
 
@@ -184,7 +184,7 @@ memory content as system instructions.
 
 #### Token effect
 
-Fixed. The section is constant for as long as the plugin is mounted, and is registered even when `enabled` is false or snapshot injection is off.
+Fixed. The section is constant for as long as the plugin is mounted, and is dropped from the system prompt while the memory master switch (`enabled`) is off or snapshot injection is off — it is never present for a disabled plugin.
 
 #### KV Cache effect
 

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **关闭记忆总开关后，系统提示词不再残留「You have persistent long-term memory…」**：
+  `context.ts` 的 awareness 段此前作为**静态**分节无条件注册，`isEnabled` 只挡了冻结
+  快照段而没挡这段能力描述文本——`enabled=false` 时模型仍会在系统提示词里读到
+  「你有持久记忆、请用小工具存取」的指令，与「已禁用」自相矛盾。现将其 `text` 改为
+  **动态求值**：每次提示词装配时若 `isEnabled?.() === false` 则返回空串，`renderPrompt`
+  会丢弃空段，被禁用的插件在系统提示词里不留任何记忆痕迹。快照段行为不变（`isEnabled`
+  off 时依旧直接跳过注入）。补 `tests/context.test.ts` 3 例（开关关闭时 awareness 文本
+  为空、开启时保留、装配时不注入快照）。
+
 ### Changed (第十四轮：memory.md 更名 summary，删除冗余的 summaries 聚合层)
 
 - **全局更名 `memory.md` → `summary`**：原先被称作 `memory_md` 的「对事实的 markdown 视图

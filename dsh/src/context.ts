@@ -3,9 +3,11 @@
  *
  * Two contributions are registered:
  *
- *  1. **Awareness section** — a static capability description telling the model
- *     it has persistent memory and which tools save/recall it. Never a
- *     personality/role.
+ *  1. **Awareness section** — a capability description telling the model it has
+ *     persistent memory and which tools save/recall it. Never a
+ *     personality/role. Its text is a *dynamic* provider that resolves to empty
+ *     while the master switch is off, so a disabled plugin leaves no memory
+ *     trace in the system prompt.
  *  2. **Frozen memory snapshot** — at the first prompt assembly of a session the
  *     current `summary` is read once from the Python store and injected as a
  *     section. The text is then cached for the lifetime of that session and
@@ -78,9 +80,13 @@ export interface MemoryContextDeps {
    * keeps the prompt prefix — and the provider's KV cache — valid).
    */
   resolveMaxTokens: () => number
-  /** Master switch for snapshot injection (awareness is always registered). */
+  /** Master switch for snapshot injection (the snapshot hook is registered only when true). */
   snapshotEnabled: boolean
-  /** Master-switch gate: when it returns false the snapshot is not injected. */
+  /**
+   * Master-switch gate: when it returns false neither the awareness text nor the
+   * snapshot is surfaced to the model — the awareness section resolves to empty
+   * (and is dropped at render) and the snapshot hook stops injecting.
+   */
   isEnabled?: () => boolean
   /** Max sessions whose frozen snapshot is retained (oldest evicted first). */
   maxFrozenSessions?: number
@@ -94,10 +100,15 @@ export interface MemoryContextDeps {
 export function registerMemoryContext(deps: MemoryContextDeps): void {
   const { ctx, bridge, userScope } = deps
 
+  // The awareness section is *dynamic*: its text is resolved at each assembly
+  // and returns empty while the master switch is off, so `renderPrompt` drops
+  // it. Without this, a disabled plugin would still leak "You have persistent
+  // long-term memory…" into the system prompt even though it refuses all
+  // memory writes and reads.
   ctx.systemPrompt.section({
     name: AWARENESS_SECTION,
     order: ctx.systemPrompt.getSectionOrder('TOOL_SESSION_QUERY'),
-    text: AWARENESS_TEXT,
+    text: () => (deps.isEnabled?.() === false ? '' : AWARENESS_TEXT),
   })
 
   if (!deps.snapshotEnabled) return

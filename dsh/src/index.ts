@@ -190,9 +190,9 @@ export function apply(ctx: Context, config: ConfigShape): void {
   ).forEach((d) => ctx.effect(() => d))
 
   // System-prompt awareness + the session-start-frozen memory snapshot.
-  // `isEnabled` gates snapshot injection; the awareness section is registered
-  // always (it is a static capability description) but injection stops when
-  // the master switch is off.
+  // `isEnabled` is the master switch: when off, the awareness section resolves
+  // to empty (so no "You have persistent long-term memory…" text reaches the
+  // system prompt) and snapshot injection stops entirely.
   //
   // The injected snapshot uses its own (smaller) budget and the compact render
   // depth: it is paid for on every request and is the view that must stay short
